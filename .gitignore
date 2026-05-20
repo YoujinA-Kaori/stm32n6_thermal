@@ -1,0 +1,35 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# STM32CubeIDE build outputs
+Binary/
+STM32CubeIDE/Appli/Debug/
+STM32CubeIDE/Appli/Release/
+
+# Local generated thermal outputs
+thermal_out/
+thermal_png/
+
+# Android local toolchain and build outputs
+thermal_android_app/.android-sdk/
+thermal_android_app/.gradle/
+thermal_android_app/.kotlin/
+thermal_android_app/.toolchain/
+thermal_android_app/local.properties
+thermal_android_app/app/build/
+thermal_android_app/dist/
+
+# Web local cache
+thermal_web/__pycache__/
+
+# Optional large local data
+# Uncomment if you do not want to upload datasets

@@ -1,0 +1,5 @@
+################################################################################
+# Shared makefile overrides for CubeIDE-generated Debug/Release builds.
+################################################################################
+
+LIBS += ../ThirdParty/libirtemp/libirtemp.lib

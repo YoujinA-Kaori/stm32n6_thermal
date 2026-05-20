@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.ThermalSerialViewer" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:statusBarColor">@color/thermal_bg</item>
+        <item name="android:navigationBarColor">@color/thermal_bg</item>
+        <item name="colorPrimary">@color/thermal_accent</item>
+        <item name="colorSecondary">@color/thermal_accent</item>
+        <item name="android:windowBackground">@color/thermal_bg</item>
+        <item name="android:textColor">@color/thermal_text</item>
+        <item name="android:textColorHint">@color/thermal_text_muted</item>
+        <item name="materialCardViewStyle">@style/Widget.Material3.CardView.Filled</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+</resources>

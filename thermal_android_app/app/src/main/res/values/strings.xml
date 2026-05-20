@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">热成像串口查看器</string>
+    <string name="status_idle">待连接</string>
+    <string name="hint_no_device">未发现受支持的 CH340 设备</string>
+    <string name="label_connect">连接</string>
+    <string name="label_disconnect">断开</string>
+    <string name="label_refresh">刷新</string>
+    <string name="label_pause">暂停</string>
+    <string name="label_resume">继续</string>
+    <string name="label_snapshot">截图</string>
+    <string name="label_palette">伪彩模式</string>
+    <string name="label_auto_range">自动温标</string>
+    <string name="label_low_range">低温</string>
+    <string name="label_high_range">高温</string>
+    <string name="label_center">中心</string>
+    <string name="label_max">最高</string>
+    <string name="label_min">最低</string>
+    <string name="label_frame">帧号</string>
+    <string name="label_device">USB 设备</string>
+    <string name="label_brand_subtitle">UART Temp14 实时预览</string>
+    <string name="label_data_panel">温度信息</string>
+    <string name="label_range_unit">%1$s: %2$d °C</string>
+    <string name="label_frame_value">%1$s: %2$d  %3$dx%4$d</string>
+    <string name="label_temp_value">%1$s: %2$s</string>
+    <string name="label_temp_point_value">%1$s: %2$s @ (%3$d, %4$d)</string>
+    <string name="label_palette_thermal">热力</string>
+    <string name="label_palette_rainbow">彩虹</string>
+    <string name="label_palette_iron">铁红</string>
+    <string name="label_palette_gray">灰度</string>
+    <string name="status_auto_connecting">检测到设备，正在自动连接</string>
+    <string name="status_request_usb_permission">正在请求 USB 权限…</string>
+    <string name="status_disconnected">已断开</string>
+    <string name="status_usb_permission_denied">USB 权限被拒绝</string>
+    <string name="status_connected">已连接：%1$s @ 921600</string>
+    <string name="status_connect_failed">串口连接失败</string>
+    <string name="status_serial_read_failed">串口读取失败</string>
+    <string name="error_open_usb_device">打开 USB 设备失败</string>
+    <string name="error_no_serial_port">设备上没有可用串口</string>
+    <string name="error_snapshot_entry">创建截图记录失败</string>
+    <string name="error_snapshot_stream">打开截图输出失败</string>
+    <string name="message_snapshot_saved">截图已保存：%1$s</string>
+    <string name="message_snapshot_failed">截图失败：%1$s</string>
+    <string name="placeholder_connect_device">请连接 CH340 并授权</string>
+    <string name="content_desc_brand_banner">热成像品牌横幅</string>
+</resources>

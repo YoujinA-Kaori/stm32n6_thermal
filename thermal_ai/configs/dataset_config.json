@@ -1,0 +1,49 @@
+{
+  "project_name": "stm32n6_thermal_five_class",
+  "input": {
+    "width": 160,
+    "height": 120,
+    "channels": 1,
+    "tensor_layout": "NHWC"
+  },
+  "raw_format": {
+    "dtype": "uint16_le",
+    "temperature_unit": "kelvin_x16",
+    "frame_bytes": 38400
+  },
+  "class_names": [
+    "empty",
+    "person",
+    "hand",
+    "hot_object",
+    "circuit_board_hotspot"
+  ],
+  "dataset_paths": {
+    "raw_root": "thermal_ai_dataset/raw",
+    "processed_root": "thermal_ai_dataset/processed"
+  },
+  "split": {
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "group_policy": "session_or_filename_prefix",
+    "seed": 42
+  },
+  "normalization": {
+    "mode": "celsius_linear_clip",
+    "temp_c_min": 0.0,
+    "temp_c_max": 150.0,
+    "output_dtype": "float32"
+  },
+  "supervision": {
+    "mode": "classification_plus_heatmap",
+    "annotation_sidecar_suffix": ".json",
+    "heatmap_sigma_px": 7.0,
+    "empty_heatmap_policy": "zeros",
+    "require_non_empty_annotation": true
+  },
+  "artifacts": {
+    "model_dir": "thermal_ai/artifacts/models",
+    "report_dir": "thermal_ai/artifacts/reports"
+  }
+}
