@@ -3,12 +3,28 @@
 Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+*.tmp
+*.log
 
-# Python cache
+# Python cache / env
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.hypothesis/
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+*.egg-info/
 
 # STM32CubeIDE build outputs
 Binary/
@@ -19,6 +35,12 @@ STM32CubeIDE/Appli/Release/
 thermal_out/
 thermal_png/
 
+# AI local artifacts
+thermal_ai/artifacts/models/*
+!thermal_ai/artifacts/models/.gitkeep
+thermal_ai/artifacts/reports/*
+!thermal_ai/artifacts/reports/.gitkeep
+
 # Android local toolchain and build outputs
 thermal_android_app/.android-sdk/
 thermal_android_app/.gradle/
@@ -27,9 +49,21 @@ thermal_android_app/.toolchain/
 thermal_android_app/local.properties
 thermal_android_app/app/build/
 thermal_android_app/dist/
+thermal_android_app/captures/
+*.iml
+*.apk
+*.aab
+*.ap_
+*.hprof
+*.jks
+*.keystore
 
 # Web local cache
 thermal_web/__pycache__/
 
+# Generic helper cache
+tools/__pycache__/
+
 # Optional large local data
 # Uncomment if you do not want to upload datasets
+thermal_ai_dataset/
