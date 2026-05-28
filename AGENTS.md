@@ -553,74 +553,74 @@ Likely next task in the next conversation:
 - 图片横幅已移动到 `thermal_web/static/assets/thermal_ai_banner.png`，并放在左侧栏顶部作为品牌图。
 - 同一个串口不能被别的程序占用；网页会自己打开/关闭串口，不需要再单独开串口监视器。
 
-## 2026-05-27 Local Snapshot / FileX Notes
+## 2026-05-27 本地截图 / FileX 记录
 
-- Local snapshot storage is now integrated into the firmware with a usable end-to-end path.
-- Final storage stack for this session:
+- 本轮已把本地截图存储功能正式接入固件，并打通了可实际使用的端到端闭环。
+- 本轮最终使用的存储链路为：
   - `ThreadX`
   - `FileX`
   - `Appli/FileX/Target/fx_stm32_sd_driver_glue.c`
   - `STM32CubeIDE/Appli/BSP/SD_NAND/sd_nand.c`
   - `HAL_SD`
   - `SDMMC2`
-- Important final decision:
-  - Do not mount or scan the SD media during boot.
-  - FileX is initialized lightly at startup, but SD mount is deferred until the user first saves a snapshot or opens the gallery.
-  - This lazy-mount behavior fixed the previous issue where early SD/FileX activity destabilized display startup and could lead to black or corrupted screen behavior.
+- 本轮最终的重要决策：
+  - 开机阶段不要主动挂载或扫描 SD 介质。
+  - `FileX` 在启动时只做轻量初始化，真正的 SD 挂载延后到用户第一次保存截图或打开图库时再执行。
+  - 这个“懒加载挂载”策略修复了此前“过早触发 SD/FileX 访问导致显示启动不稳定，甚至出现黑屏或花屏”的问题。
 
-Current local storage behavior:
+### 当前本地存储行为
 
-- Snapshot save path:
-  - Main screen footer button saves the current thermal preview as a BMP.
-  - Full-screen page also has a dedicated snapshot button.
-- Gallery path:
-  - The old `device info` card is no longer the storage entry.
-  - A dedicated `图库` button is created on the `系统` tab and opens the gallery screen.
-- File location and naming:
-  - Directory: `/THERMAL`
-  - Files: `THM00001.BMP`, `THM00002.BMP`, ...
-- Gallery functions:
-  - Open latest snapshot
-  - Previous / next image
-  - Delete current image
+- 截图保存入口：
+  - 主界面底部按钮可将当前热像预览保存为 BMP。
+  - 全屏页也新增了独立的拍照按钮。
+- 图库入口：
+  - 原先的 `device info` 卡片不再承担文件系统入口功能。
+  - 当前在 `系统` 页签中新增独立 `图库` 按钮，点击后进入图库页。
+- 文件位置与命名：
+  - 目录：`/THERMAL`
+  - 文件名：`THM00001.BMP`、`THM00002.BMP` ...
+- 图库当前支持：
+  - 打开最新截图
+  - 上一张 / 下一张
+  - 删除当前图片
 
-Snapshot rendering notes:
+### 截图渲染说明
 
-- Saved images are BMP RGB565 files based on the live LVGL thermal preview image plus overlay redraw.
-- Overlay content currently includes:
-  - center cross
-  - center temperature
-  - max temperature
-  - min temperature
-  - max/min markers
-- The max/min temperature badges in saved images were changed from object-relative placement to a fixed safe layout so they are not clipped.
-- The max/min marker labels in saved images are now forced to:
-  - max marker: `高`
-  - min marker: `低`
-  This avoids depending on the live marker widget text.
-- Gallery preview now applies image zoom-to-fit so full-screen snapshots can be viewed inside the gallery panel without cropping.
+- 保存出来的图片是 BMP RGB565 文件，底图来自当前 LVGL 实时热像预览，再叠加重新绘制的温标信息。
+- 当前叠加内容包括：
+  - 中心十字
+  - 中心温度
+  - 最高温
+  - 最低温
+  - 高低温标记
+- 保存图中的最高温 / 最低温温度牌，已经从“跟随对象相对位置”改成“固定安全区域布局”，避免被裁剪。
+- 保存图中的高低温 marker 文案当前已强制固定为：
+  - 最高温 marker：`高`
+  - 最低温 marker：`低`
+  这样可以避免依赖运行时界面对象上的文本内容。
+- 图库里的预览图当前已经支持缩放自适应，因此全屏截图在图库面板中查看时不会再被裁切。
 
-Font / Chinese glyph notes from this session:
+### 本轮中文字库说明
 
-- The tiny subset font `lv_font_thermal_cn_18.c` was regenerated again.
-- Newly confirmed required glyphs include:
+- 小字库 `lv_font_thermal_cn_18.c` 本轮已重新生成。
+- 本轮新增确认必须覆盖的汉字包括：
   - `图`
   - `库`
   - `拍`
   - `照`
   - `高`
   - `低`
-- Custom buttons that show Chinese labels must explicitly use `lv_font_thermal_cn_18`.
-- If new Chinese UI text appears as squares again:
-  1. Check whether the widget explicitly uses `lv_font_thermal_cn_18`.
-  2. Regenerate the subset font with `tools/gen_lvgl_subset_font.py`.
-  3. Do not fall back to global SourceHanSerif mounting.
-- Local font regeneration in this session used:
+- 所有直接显示中文的新按钮，必须显式挂载 `lv_font_thermal_cn_18`。
+- 如果后续新增中文再次出现方块，优先检查：
+  1. 该控件是否显式使用了 `lv_font_thermal_cn_18`
+  2. 是否已用 `tools/gen_lvgl_subset_font.py` 重新生成子集字体
+  3. 不要回退到全局挂载 `SourceHanSerif` 的旧方案
+- 本轮重新生成字体时，实际使用的是：
   - `C:\Users\26218\AppData\Local\Programs\Python\Python310\python.exe`
-  - with Pillow available
-  because the default `D:\STEdgeAI\2.0\Utilities\windows\python.exe` environment still lacks `PIL/pip`.
+  - 且该环境已安装 Pillow
+  原因是默认 `D:\STEdgeAI\2.0\Utilities\windows\python.exe` 仍然缺少 `PIL/pip`
 
-Files mainly touched by this session:
+### 本轮主要改动文件
 
 - `Appli/FileX/App/app_filex.c`
 - `Appli/FileX/App/app_filex.h`
@@ -633,11 +633,11 @@ Files mainly touched by this session:
 - `STM32CubeIDE/Appli/gui_guider/generated/guider_fonts/lv_font_thermal_cn_18.c`
 - `STM32CubeIDE/Appli/BSP/SD_NAND/`
 
-Open follow-up items after this session:
+### 本轮之后仍需继续关注
 
-- Continue long-run validation of repeated save / open / delete operations on the soldered 2GB SD NAND.
-- If screenshot reliability changes again, first suspect:
-  - early SD mount timing
-  - glue-layer behavior in `fx_stm32_sd_driver_glue.c`
-  - whether the BSP `sd_nand` path still returns success consistently
-- If future agents touch the file system, preserve the lazy-mount strategy unless there is a very strong reason to change it.
+- 继续做焊接式 2GB SD NAND 上的长时间保存 / 打开 / 删除稳定性验证。
+- 如果后续截图可靠性再次波动，优先怀疑：
+  - SD 挂载时机是否又提前了
+  - `fx_stm32_sd_driver_glue.c` 的 glue 层行为是否被改坏
+  - BSP `sd_nand` 路径是否仍能稳定返回成功
+- 后续如果再修改文件系统，除非有非常强的理由，否则不要破坏当前“懒加载挂载”策略。
