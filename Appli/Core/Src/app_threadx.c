@@ -37,6 +37,7 @@
 #include "libirtemp.h"
 #include "Tiny1C/tiny1c_thermal_app.h"
 #include "usart.h"
+#include "RGBLCD/rgblcd.h"
 
 /* USER CODE END Includes */
 
@@ -263,27 +264,6 @@ void MX_ThreadX_Init(void)
 }
 
 /* USER CODE BEGIN 1 */
-/**
-  * @brief  Bridge hard-float pow symbol required by libirtemp vendor library.
-  * @param  x Base value.
-  * @param  y Exponent value.
-  * @retval pow(x, y) result.
-  */
-double __hardfp_pow(double x, double y)
-{
-  return pow(x, y);
-}
-
-/**
-  * @brief  Bridge hard-float sqrt symbol required by libirtemp vendor library.
-  * @param  x Input value.
-  * @retval sqrt(x) result.
-  */
-double __hardfp_sqrt(double x)
-{
-  return sqrt(x);
-}
-
 /**
   * @brief  Apply libirtemp environment compensation to a temperature sample.
   * @param  emissivity Emissivity in range [0, 1].
@@ -918,6 +898,7 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
 
   TX_PARAMETER_NOT_USED(thread_input);
 
+  rgblcd_init();
   lv_init();
   lv_port_disp_init();
   lv_port_indev_init();

@@ -74,6 +74,9 @@ void HAL_MspInit(void)
   HAL_PWREx_EnableVddIO4();
   HAL_PWREx_ConfigVddIORange(PWR_VDDIO4,PWR_VDDIO_RANGE_3V3);
 
+  HAL_PWREx_EnableVddIO5();
+  HAL_PWREx_ConfigVddIORange(PWR_VDDIO5,PWR_VDDIO_RANGE_3V3);
+
   /* USER CODE BEGIN MspInit 1 */
 
   /* USER CODE END MspInit 1 */

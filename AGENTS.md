@@ -552,3 +552,92 @@ Likely next task in the next conversation:
 - Web 端直接复用 `tools/uart_temp14_parser.py` 的串口帧格式，解析的是原始 `temp14` payload。
 - 图片横幅已移动到 `thermal_web/static/assets/thermal_ai_banner.png`，并放在左侧栏顶部作为品牌图。
 - 同一个串口不能被别的程序占用；网页会自己打开/关闭串口，不需要再单独开串口监视器。
+
+## 2026-05-27 Local Snapshot / FileX Notes
+
+- Local snapshot storage is now integrated into the firmware with a usable end-to-end path.
+- Final storage stack for this session:
+  - `ThreadX`
+  - `FileX`
+  - `Appli/FileX/Target/fx_stm32_sd_driver_glue.c`
+  - `STM32CubeIDE/Appli/BSP/SD_NAND/sd_nand.c`
+  - `HAL_SD`
+  - `SDMMC2`
+- Important final decision:
+  - Do not mount or scan the SD media during boot.
+  - FileX is initialized lightly at startup, but SD mount is deferred until the user first saves a snapshot or opens the gallery.
+  - This lazy-mount behavior fixed the previous issue where early SD/FileX activity destabilized display startup and could lead to black or corrupted screen behavior.
+
+Current local storage behavior:
+
+- Snapshot save path:
+  - Main screen footer button saves the current thermal preview as a BMP.
+  - Full-screen page also has a dedicated snapshot button.
+- Gallery path:
+  - The old `device info` card is no longer the storage entry.
+  - A dedicated `图库` button is created on the `系统` tab and opens the gallery screen.
+- File location and naming:
+  - Directory: `/THERMAL`
+  - Files: `THM00001.BMP`, `THM00002.BMP`, ...
+- Gallery functions:
+  - Open latest snapshot
+  - Previous / next image
+  - Delete current image
+
+Snapshot rendering notes:
+
+- Saved images are BMP RGB565 files based on the live LVGL thermal preview image plus overlay redraw.
+- Overlay content currently includes:
+  - center cross
+  - center temperature
+  - max temperature
+  - min temperature
+  - max/min markers
+- The max/min temperature badges in saved images were changed from object-relative placement to a fixed safe layout so they are not clipped.
+- The max/min marker labels in saved images are now forced to:
+  - max marker: `高`
+  - min marker: `低`
+  This avoids depending on the live marker widget text.
+- Gallery preview now applies image zoom-to-fit so full-screen snapshots can be viewed inside the gallery panel without cropping.
+
+Font / Chinese glyph notes from this session:
+
+- The tiny subset font `lv_font_thermal_cn_18.c` was regenerated again.
+- Newly confirmed required glyphs include:
+  - `图`
+  - `库`
+  - `拍`
+  - `照`
+  - `高`
+  - `低`
+- Custom buttons that show Chinese labels must explicitly use `lv_font_thermal_cn_18`.
+- If new Chinese UI text appears as squares again:
+  1. Check whether the widget explicitly uses `lv_font_thermal_cn_18`.
+  2. Regenerate the subset font with `tools/gen_lvgl_subset_font.py`.
+  3. Do not fall back to global SourceHanSerif mounting.
+- Local font regeneration in this session used:
+  - `C:\Users\26218\AppData\Local\Programs\Python\Python310\python.exe`
+  - with Pillow available
+  because the default `D:\STEdgeAI\2.0\Utilities\windows\python.exe` environment still lacks `PIL/pip`.
+
+Files mainly touched by this session:
+
+- `Appli/FileX/App/app_filex.c`
+- `Appli/FileX/App/app_filex.h`
+- `Appli/FileX/Target/fx_stm32_sd_driver_glue.c`
+- `Appli/FileX/Target/fx_stm32_sd_driver.h`
+- `Appli/AZURE_RTOS/App/app_azure_rtos.c`
+- `Appli/AZURE_RTOS/App/app_azure_rtos_config.h`
+- `Appli/Core/Src/app_threadx.c`
+- `STM32CubeIDE/Appli/gui_guider/custom/custom.c`
+- `STM32CubeIDE/Appli/gui_guider/generated/guider_fonts/lv_font_thermal_cn_18.c`
+- `STM32CubeIDE/Appli/BSP/SD_NAND/`
+
+Open follow-up items after this session:
+
+- Continue long-run validation of repeated save / open / delete operations on the soldered 2GB SD NAND.
+- If screenshot reliability changes again, first suspect:
+  - early SD mount timing
+  - glue-layer behavior in `fx_stm32_sd_driver_glue.c`
+  - whether the BSP `sd_nand` path still returns success consistently
+- If future agents touch the file system, preserve the lazy-mount strategy unless there is a very strong reason to change it.
