@@ -641,3 +641,113 @@ Likely next task in the next conversation:
   - `fx_stm32_sd_driver_glue.c` 的 glue 层行为是否被改坏
   - BSP `sd_nand` 路径是否仍能稳定返回成功
 - 后续如果再修改文件系统，除非有非常强的理由，否则不要破坏当前“懒加载挂载”策略。
+
+## 2026-05-31 Web 串口图库导出记录
+
+### 本轮目标
+
+- 在不增加额外硬件接口的前提下，复用当前 `USART1`，让 PC/Web 端能够把焊死 SD NAND 里的截图文件导出到电脑。
+- 当前最终方向不是“实时流和文件流并行复用同一时刻的串口”，而是：
+  - `STREAM_MODE`：继续发送实时 `TEMP14`
+  - `FILE_MODE`：暂停实时流，只处理文件命令
+
+### 当前固件侧结论
+
+- 已在 `Appli/Core/Src/app_threadx.c` 中加入 UART 文件模式控制：
+  - `APP_UART_FILE_HOLD_GUI`
+  - `APP_UART_FILE_HOLD_WEB`
+- 当前文件模式采用“持有位”而不是简单开关：
+  - GUI 进入图库时可持有
+  - Web 发起文件事务时也可持有
+  - 只有所有持有位都释放后，实时流才恢复
+- `uart_stream_thread` 当前会在文件模式激活时暂停 `TEMP14` 发送。
+- 已新增 `uart_command_thread`，负责处理最小文件协议命令。
+
+### 当前串口文件协议
+
+- 当前已实现命令：
+  - `FILE_ENTER`
+  - `FILE_EXIT`
+  - `FILE_LIST`
+  - `FILE_GET_LATEST`
+  - `FILE_GET <filename>`
+- 当前返回格式：
+  - `OK ...`
+  - `ERR ...`
+  - `LIST <count>`
+  - `NAME <filename>`
+  - `LIST_END`
+  - `FILE_BEGIN <filename> <width> <height> <payload_bytes>`
+  - `DATA <seq> <base64>`
+  - `FILE_END`
+- 当前文件传输不是直接回传原始 BMP 文件字节流，而是：
+  - MCU 先从 SD 中加载 BMP
+  - 取出 RGB565 像素数据
+  - 分块 Base64 发送
+  - PC/Web 端再重建 BMP 文件
+
+### 当前 Web 端实现状态
+
+- `thermal_web/` 已补充图库导出能力。
+- 当前 Web 端新增接口：
+  - `POST /api/gallery/list`
+  - `POST /api/gallery/download-latest`
+  - `POST /api/gallery/download`
+- 当前前端页面已支持：
+  - `同步图库`
+  - `下载选中`
+  - 列出 SD 中的 `THMxxxxx.BMP`
+  - 点击文件名选中后下载
+- 下载结果保存在：
+  - `thermal_web/downloads/`
+
+### 当前时序与稳定性结论
+
+- 本轮已经确认：
+  - **直接在 Web 端点“同步图库/下载”并不是 100% 稳定**
+  - **先在板子本地进入一次图库，再回到 Web 端操作，成功率明显更高**
+- 这说明当前最真实的问题不是协议方向错误，而是：
+  - 第一次进入文件模式时
+  - 第一次触发 FileX/SD 准备时
+  - 时序仍然偏紧
+- 已做过的缓解包括：
+  - `FILE_ENTER` 中先调用 `app_filex_prepare()`
+  - `app_filex_prepare()` 当前带 3 次重试
+  - Web 端图库同步/下载也带 3 次重试
+  - Web 端串口事务开始前会清空输入缓冲
+  - Web 端协议行读取已从 `readline()` 改为逐字节等到完整换行，减少半行 Base64 导致的 padding 错误
+  - Web 端同步/下载逻辑已放入线程池，避免 FastAPI 主循环被阻塞
+  - Web 端前端请求带超时，避免页面一直卡在“正在同步”
+  - 固件侧增加了 Web 文件模式超时自动恢复，避免异常后长期停流
+
+### 当前已确认的可用操作规程
+
+- 当前最稳的使用方式是：
+  1. 板子开机
+  2. 先进入一次本地 `图库`
+  3. 再退出回主界面
+  4. 打开 Web 页面并连接串口
+  5. 点 `同步图库`
+  6. 在列表中点选目标文件
+  7. 点 `下载选中`
+- 结论：
+  - 这套流程当前已经可实际使用
+  - 不必继续在本轮追求“第一次直接点 Web 也 100% 成功”
+  - 后续可把“先进本地图库预热”作为当前阶段的稳定操作规程
+
+### 对后续 Agent 的建议
+
+- 如果后续继续优化这条链，优先把目标定为：
+  - 不先进本地图库也能稳定 `FILE_ENTER`
+  - 而不是重新推翻当前协议
+- 如果再次出现以下错误，优先怀疑仍是“第一次文件模式准备时序”问题：
+  - `串口命令超时`
+  - `串口协议重同步超时`
+  - `FILE_ENTER 失败: ERR Storage Err`
+- 如果再次出现 Base64 错误，如：
+  - `Incorrect padding`
+  - `Invalid base64-encoded string`
+  优先检查 Web 端协议读取是否又退回到了非整行读取。
+- 当前已经确认固件支持按文件名下载：
+  - `FILE_GET <filename>`
+  后续如需扩展“删除选中”“下载上一张/下一张”，优先在现有协议上加，不要重做整体框架。
