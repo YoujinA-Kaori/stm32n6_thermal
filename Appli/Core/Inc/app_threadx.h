@@ -26,6 +26,7 @@
 #endif
 
 /* Includes ------------------------------------------------------------------*/
+#include <stdint.h>
 #include "tx_api.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -35,6 +36,12 @@
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+typedef enum
+{
+  APP_UART_FILE_HOLD_NONE = 0x00U,
+  APP_UART_FILE_HOLD_GUI  = 0x01U,
+  APP_UART_FILE_HOLD_WEB  = 0x02U
+} app_uart_file_hold_t;
 
 /* USER CODE END ET */
 
@@ -64,6 +71,9 @@ UINT App_ThreadX_Init(VOID *memory_ptr);
 void MX_ThreadX_Init(void);
 
 /* USER CODE BEGIN EFP */
+void app_uart_request_file_mode(uint32_t hold_mask);
+void app_uart_release_file_mode(uint32_t hold_mask);
+uint8_t app_uart_is_file_mode_active(void);
 
 /* USER CODE END EFP */
 

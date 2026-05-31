@@ -167,6 +167,70 @@ select {
   color: var(--muted);
 }
 
+.gallery-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.gallery-status {
+  min-height: 18px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.gallery-status.error {
+  color: #ff8e8e;
+}
+
+.gallery-download {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.gallery-download a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.gallery-download a:hover {
+  text-decoration: underline;
+}
+
+.gallery-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 140px;
+  overflow: auto;
+  color: var(--text);
+}
+
+.gallery-list li {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.gallery-list li:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.gallery-list li.selected {
+  background: rgba(102, 217, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(102, 217, 255, 0.25);
+}
+
+.hidden {
+  display: none;
+}
+
 .panel-row {
   display: flex;
   justify-content: space-between;

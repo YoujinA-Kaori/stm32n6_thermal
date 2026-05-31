@@ -4,13 +4,14 @@ import argparse
 import asyncio
 import base64
 import json
+import logging
 import os
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -32,15 +33,21 @@ except ImportError:  # pragma: no cover
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from tools.uart_temp14_parser import PACKET_TYPE_TEMP14, PacketParser, ThermalPacket, temp14_payload_to_array
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
+DOWNLOAD_DIR = APP_DIR / "downloads"
 DEFAULT_BAUD = 921600
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 AUTO_SERIAL_PORT = "auto"
+
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+LOGGER = logging.getLogger("thermal_web")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def temp14_to_celsius(temp14_value: int) -> float:
@@ -63,6 +70,52 @@ def list_serial_ports() -> list[dict[str, str]]:
             }
         )
     return ports
+
+
+def build_rgb565_bmp_bytes(width: int, height: int, pixel_bytes: bytes) -> bytes:
+    """Build one top-down RGB565 BMP file from raw pixel bytes."""
+    if width <= 0 or height <= 0:
+        raise ValueError("invalid BMP dimensions")
+
+    image_size = width * height * 2
+    if len(pixel_bytes) != image_size:
+        raise ValueError(f"unexpected RGB565 payload size: got {len(pixel_bytes)}, want {image_size}")
+
+    header_size = 14 + 40 + 12
+    file_size = header_size + image_size
+    header = bytearray(header_size)
+    header[0:2] = b"BM"
+    header[2:6] = file_size.to_bytes(4, "little")
+    header[10:14] = header_size.to_bytes(4, "little")
+    header[14:18] = (40).to_bytes(4, "little")
+    header[18:22] = width.to_bytes(4, "little", signed=False)
+    header[22:26] = (-height).to_bytes(4, "little", signed=True)
+    header[26:28] = (1).to_bytes(2, "little")
+    header[28:30] = (16).to_bytes(2, "little")
+    header[30:34] = (3).to_bytes(4, "little")
+    header[34:38] = image_size.to_bytes(4, "little")
+    header[38:42] = (2835).to_bytes(4, "little")
+    header[42:46] = (2835).to_bytes(4, "little")
+    header[54:58] = (0xF800).to_bytes(4, "little")
+    header[58:62] = (0x07E0).to_bytes(4, "little")
+    header[62:66] = (0x001F).to_bytes(4, "little")
+    return bytes(header) + pixel_bytes
+
+
+def pick_unique_download_path(file_name: str) -> Path:
+    """Create a non-conflicting destination path inside the downloads folder."""
+    candidate = DOWNLOAD_DIR / file_name
+    if not candidate.exists():
+        return candidate
+
+    stem = candidate.stem
+    suffix = candidate.suffix
+    for index in range(1, 1000):
+        numbered = DOWNLOAD_DIR / f"{stem}_{index}{suffix}"
+        if not numbered.exists():
+            return numbered
+
+    raise RuntimeError("too many duplicate download names")
 
 
 @dataclass
@@ -108,6 +161,7 @@ class FrameHub:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._transaction_lock = threading.Lock()
         self._snapshot: Optional[FrameSnapshot] = None
         self._status_text = "待连接"
         self._serial_port = ""
@@ -229,11 +283,8 @@ class FrameHub:
             self._snapshot = snapshot
             self._status_text = f"实时预览 {self._serial_port} @ {self._baud_rate}"
 
-    def start_reader(self) -> None:
-        """Start the background serial reader."""
-        if self._reader_thread is not None and self._reader_thread.is_alive():
-            return
-
+    def _resolve_serial_settings(self) -> tuple[str, int]:
+        """Resolve the serial port and baud rate used by either reader or file session."""
         with self._lock:
             serial_port = self._serial_port
             baud_rate = self._baud_rate
@@ -241,18 +292,29 @@ class FrameHub:
         if not serial_port or serial_port == AUTO_SERIAL_PORT:
             ports = list_serial_ports()
             if len(ports) == 0:
-                self.set_status("未发现串口")
-                return
+                raise RuntimeError("未发现串口")
             serial_port = ports[0]["device"]
             with self._lock:
                 self._serial_port = serial_port
 
         if not serial_port:
-            self.set_status("未配置串口")
+            raise RuntimeError("未配置串口")
+
+        return serial_port, baud_rate
+
+    def start_reader(self) -> None:
+        """Start the background serial reader."""
+        if self._reader_thread is not None and self._reader_thread.is_alive():
             return
 
         if serial is None:  # pragma: no cover
             self.set_status(f"缺少 pyserial: {SERIAL_IMPORT_ERROR}")
+            return
+
+        try:
+            serial_port, baud_rate = self._resolve_serial_settings()
+        except RuntimeError as exc:
+            self.set_status(str(exc))
             return
 
         self._stop_event.clear()
@@ -296,10 +358,204 @@ class FrameHub:
         except Exception as exc:  # pragma: no cover
             self.set_status(f"串口错误: {exc}")
 
+    def _send_ascii_command(self, ser: "serial.Serial", command_text: str) -> None:
+        """Send one newline-terminated ASCII command."""
+        packet = (command_text.strip() + "\n").encode("ascii")
+        ser.write(packet)
+        ser.flush()
+
+    def _flush_input(self, ser: "serial.Serial", settle_seconds: float = 0.12) -> None:
+        """Drop any buffered bytes before starting a file transaction."""
+        ser.reset_input_buffer()
+        time.sleep(settle_seconds)
+        ser.reset_input_buffer()
+
+    def _read_ascii_line(self, ser: "serial.Serial", timeout_seconds: float = 5.0) -> str:
+        """Read one newline-terminated ASCII line from the MCU."""
+        deadline = time.time() + timeout_seconds
+        line_buffer = bytearray()
+        while time.time() < deadline:
+            next_byte = ser.read(1)
+            if not next_byte:
+                continue
+            line_buffer.extend(next_byte)
+            if next_byte == b"\n":
+                return line_buffer.decode("ascii", errors="ignore").strip()
+        raise TimeoutError("串口命令超时")
+
+    def _read_protocol_line(
+        self,
+        ser: "serial.Serial",
+        accepted_prefixes: tuple[str, ...],
+        timeout_seconds: float = 5.0,
+    ) -> str:
+        """Read one MCU protocol line while ignoring binary stream residue."""
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            line = self._read_ascii_line(ser, timeout_seconds=max(0.2, min(1.0, deadline - time.time())))
+            if not line:
+                continue
+            if any(line.startswith(prefix) for prefix in accepted_prefixes):
+                return line
+        raise TimeoutError("串口协议重同步超时")
+
+    def _ensure_ok_response(self, ser: "serial.Serial", command_text: str) -> str:
+        """Send one command and require an OK line."""
+        self._send_ascii_command(ser, command_text)
+        response = self._read_protocol_line(ser, ("OK ", "ERR "), timeout_seconds=15.0)
+        if not response.startswith("OK "):
+            raise RuntimeError(f"{command_text} 失败: {response}")
+        return response
+
+    def _run_file_session(self, session_fn: Callable[["serial.Serial"], dict[str, object]]) -> dict[str, object]:
+        """Run one exclusive file transaction by temporarily pausing the real-time reader."""
+        if serial is None:  # pragma: no cover
+            raise RuntimeError(f"缺少 pyserial: {SERIAL_IMPORT_ERROR}")
+
+        with self._transaction_lock:
+            self.stop_reader()
+            try:
+                serial_port, baud_rate = self._resolve_serial_settings()
+                self.set_status(f"文件模式 {serial_port} @ {baud_rate}")
+                with serial.Serial(  # type: ignore[union-attr]
+                    port=serial_port,
+                    baudrate=baud_rate,
+                    bytesize=8,
+                    parity="N",
+                    stopbits=1,
+                    timeout=1.0,
+                    write_timeout=2.0,
+                ) as ser:
+                    self._flush_input(ser)
+                    return session_fn(ser)
+            finally:
+                self.start_reader()
+
+    def list_sd_gallery(self) -> dict[str, object]:
+        """Fetch the snapshot list from the MCU SD gallery."""
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                def session(ser: "serial.Serial") -> dict[str, object]:
+                    files: list[str] = []
+                    self._ensure_ok_response(ser, "FILE_ENTER")
+                    try:
+                        self._send_ascii_command(ser, "FILE_LIST")
+                        line = self._read_protocol_line(ser, ("LIST ", "ERR "), timeout_seconds=15.0)
+                        if not line.startswith("LIST "):
+                            raise RuntimeError(f"无效列表响应: {line}")
+
+                        while True:
+                            line = self._read_protocol_line(ser, ("NAME ", "LIST_END", "ERR "), timeout_seconds=10.0)
+                            if line == "LIST_END":
+                                break
+                            if line.startswith("NAME "):
+                                files.append(line[5:])
+                            elif line.startswith("ERR "):
+                                raise RuntimeError(line)
+                        return {"files": files, "count": len(files)}
+                    finally:
+                        try:
+                            self._ensure_ok_response(ser, "FILE_EXIT")
+                        except Exception:
+                            pass
+
+                return self._run_file_session(session)
+            except Exception as exc:
+                last_error = exc
+                LOGGER.warning("list_sd_gallery attempt %s failed: %s", attempt + 1, exc)
+                time.sleep(0.25)
+        raise RuntimeError(str(last_error) if last_error is not None else "图库同步失败")
+
+    def download_latest_snapshot(self) -> dict[str, object]:
+        """Download the latest SD snapshot and store it on the host PC."""
+        return self._download_snapshot_by_command("FILE_GET_LATEST")
+
+    def download_snapshot_named(self, file_name: str) -> dict[str, object]:
+        """Download one selected SD snapshot by file name."""
+        normalized_name = file_name.strip()
+        if not normalized_name:
+            raise RuntimeError("未指定要下载的文件")
+        return self._download_snapshot_by_command(f"FILE_GET {normalized_name}")
+
+    def _download_snapshot_by_command(self, command_text: str) -> dict[str, object]:
+        """Run the common MCU file-download flow for one FILE_GET command."""
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                def session(ser: "serial.Serial") -> dict[str, object]:
+                    self._ensure_ok_response(ser, "FILE_ENTER")
+                    try:
+                        self._send_ascii_command(ser, command_text)
+                        line = self._read_protocol_line(ser, ("FILE_BEGIN ", "ERR "), timeout_seconds=15.0)
+                        if line.startswith("ERR "):
+                            raise RuntimeError(line)
+                        if not line.startswith("FILE_BEGIN "):
+                            raise RuntimeError(f"无效文件头: {line}")
+
+                        parts = line.split(" ", 4)
+                        if len(parts) != 5:
+                            raise RuntimeError(f"文件头字段不完整: {line}")
+
+                        file_name = parts[1]
+                        width = int(parts[2])
+                        height = int(parts[3])
+                        payload_size = int(parts[4])
+                        payload_bytes = bytearray()
+                        expected_chunks = (payload_size + 383) // 384
+
+                        for _ in range(expected_chunks):
+                            line = self._read_protocol_line(ser, ("DATA ", "ERR "), timeout_seconds=10.0)
+                            if line.startswith("ERR "):
+                                raise RuntimeError(line)
+                            if not line.startswith("DATA "):
+                                raise RuntimeError(f"无效数据包: {line}")
+
+                            payload_parts = line.split(" ", 2)
+                            if len(payload_parts) != 3:
+                                raise RuntimeError(f"数据包字段不完整: {line}")
+                            payload_bytes.extend(base64.b64decode(payload_parts[2]))
+
+                        line = self._read_protocol_line(ser, ("FILE_END", "ERR "), timeout_seconds=10.0)
+                        if line.startswith("ERR "):
+                            raise RuntimeError(line)
+                        if line != "FILE_END":
+                            raise RuntimeError(f"文件结束标记异常: {line}")
+
+                        if len(payload_bytes) != payload_size:
+                            raise RuntimeError(f"文件长度不匹配: got {len(payload_bytes)}, want {payload_size}")
+
+                        bmp_bytes = build_rgb565_bmp_bytes(width, height, bytes(payload_bytes))
+                        save_path = pick_unique_download_path(file_name)
+                        save_path.write_bytes(bmp_bytes)
+
+                        return {
+                            "file_name": file_name,
+                            "width": width,
+                            "height": height,
+                            "payload_bytes": payload_size,
+                            "saved_name": save_path.name,
+                            "saved_path": str(save_path),
+                            "download_url": f"/downloads/{save_path.name}",
+                        }
+                    finally:
+                        try:
+                            self._ensure_ok_response(ser, "FILE_EXIT")
+                        except Exception:
+                            pass
+
+                return self._run_file_session(session)
+            except Exception as exc:
+                last_error = exc
+                LOGGER.warning("download_snapshot attempt %s failed: %s", attempt + 1, exc)
+                time.sleep(0.35)
+        raise RuntimeError(str(last_error) if last_error is not None else "最新截图下载失败")
+
 
 HUB = FrameHub()
 app = FastAPI(title="热成像网页查看器")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
 
 @app.on_event("startup")
@@ -375,6 +631,38 @@ async def api_connect(request: Request) -> JSONResponse:
             "ports": HUB.available_ports(),
         }
     )
+
+
+@app.post("/api/gallery/list")
+async def api_gallery_list() -> JSONResponse:
+    """Fetch the SD snapshot list via the serial file protocol."""
+    try:
+        result = await run_in_threadpool(HUB.list_sd_gallery)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(result)
+
+
+@app.post("/api/gallery/download-latest")
+async def api_gallery_download_latest() -> JSONResponse:
+    """Download the latest SD snapshot to the host machine."""
+    try:
+        result = await run_in_threadpool(HUB.download_latest_snapshot)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(result)
+
+
+@app.post("/api/gallery/download")
+async def api_gallery_download(request: Request) -> JSONResponse:
+    """Download one selected SD snapshot to the host machine."""
+    body = await request.json()
+    file_name = str(body.get("file_name", ""))
+    try:
+        result = await run_in_threadpool(HUB.download_snapshot_named, file_name)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse(result)
 
 
 @app.websocket("/ws")

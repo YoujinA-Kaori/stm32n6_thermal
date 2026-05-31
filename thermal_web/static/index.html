@@ -12,12 +12,12 @@
       <div class="brand">
         <div class="brand-kicker">STM32N6</div>
         <h1>热成像查看器</h1>
-        <p>UART Temp14 实时预览</p>
+        <p>UART Temp14 实时预览 + SD 图库导出</p>
       </div>
 
       <img class="brand-image" src="/static/assets/thermal_ai_banner.png" alt="热成像品牌横幅">
 
-      <div class="status-chip" id="statusChip">连接中</div>
+      <div class="status-chip" id="statusChip">待连接</div>
 
       <div class="panel">
         <div class="panel-row"><span>串口</span><strong id="serialPort">-</strong></div>
@@ -70,6 +70,19 @@
         <div class="panel-row"><span>最低</span><strong id="minValue">-</strong></div>
       </div>
 
+      <div class="panel">
+        <div class="panel-title">SD 图库</div>
+        <div class="gallery-actions">
+          <button id="syncGalleryBtn" class="secondary">同步图库</button>
+          <button id="downloadSelectedBtn">下载选中</button>
+        </div>
+        <div class="gallery-status" id="galleryStatus">未同步，先同步后选择文件</div>
+        <div class="gallery-download hidden" id="galleryDownloadWrap">
+          <a id="galleryDownloadLink" href="#" target="_blank" rel="noopener">打开最新下载文件</a>
+        </div>
+        <ul class="gallery-list" id="galleryList"></ul>
+      </div>
+
       <div class="actions">
         <button id="pauseBtn" class="secondary">暂停</button>
         <button id="shotBtn">截图</button>
@@ -86,7 +99,7 @@
           <div class="legend-strip"></div>
           <span>高</span>
         </div>
-        <div class="hint">按 F11 全屏</div>
+        <div class="hint">下载 SD 图像时，实时流会暂时暂停</div>
       </div>
     </main>
   </div>

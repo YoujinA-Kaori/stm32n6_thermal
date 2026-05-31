@@ -57,6 +57,7 @@ UINT MX_FileX_Init(VOID *memory_ptr);
 /* USER CODE BEGIN EFP */
 uint8_t app_filex_is_ready(void);
 UINT app_filex_get_last_status(void);
+UINT app_filex_prepare(void);
 UINT app_filex_snapshot_save_rgb565(const uint16_t *frame_buffer_ptr,
                                     uint16_t width,
                                     uint16_t height,

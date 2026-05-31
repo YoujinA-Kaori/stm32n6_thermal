@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "tx_api.h"
 #include "sdmmc.h"
 /* USER CODE END Includes */
 
@@ -60,6 +61,7 @@ typedef struct
 #define CFG_APP_FILEX_BMP_PPM                   2835U
 #define CFG_APP_FILEX_MAX_WIDTH                 640U
 #define CFG_APP_FILEX_MAX_HEIGHT                480U
+#define CFG_APP_FILEX_PREPARE_RETRIES           3U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -260,6 +262,40 @@ uint8_t app_filex_is_ready(void)
 UINT app_filex_get_last_status(void)
 {
   return g_app_filex_last_status;
+}
+
+/**
+  * @brief  Ensure the FileX media is mounted and ready for later use.
+  * @retval FileX status code.
+  */
+UINT app_filex_prepare(void)
+{
+  UINT status;
+  uint32_t retry_index;
+
+  for (retry_index = 0U; retry_index < CFG_APP_FILEX_PREPARE_RETRIES; retry_index++)
+  {
+    status = tx_mutex_get(&g_app_filex_mutex, TX_WAIT_FOREVER);
+    if (status != TX_SUCCESS)
+    {
+      return status;
+    }
+
+    status = app_filex_ensure_ready_locked();
+    g_app_filex_last_status = status;
+    if (status == FX_SUCCESS)
+    {
+      g_app_filex_ready = 1U;
+      (void)tx_mutex_put(&g_app_filex_mutex);
+      return FX_SUCCESS;
+    }
+
+    g_app_filex_ready = 0U;
+    (void)tx_mutex_put(&g_app_filex_mutex);
+    tx_thread_sleep((TX_TIMER_TICKS_PER_SECOND >= 10U) ? (TX_TIMER_TICKS_PER_SECOND / 10U) : 1U);
+  }
+
+  return status;
 }
 
 /**

@@ -13,6 +13,12 @@ const maxValueEl = document.getElementById("maxValue");
 const minValueEl = document.getElementById("minValue");
 const pauseBtn = document.getElementById("pauseBtn");
 const shotBtn = document.getElementById("shotBtn");
+const syncGalleryBtn = document.getElementById("syncGalleryBtn");
+const downloadSelectedBtn = document.getElementById("downloadSelectedBtn");
+const galleryStatusEl = document.getElementById("galleryStatus");
+const galleryListEl = document.getElementById("galleryList");
+const galleryDownloadWrapEl = document.getElementById("galleryDownloadWrap");
+const galleryDownloadLinkEl = document.getElementById("galleryDownloadLink");
 
 const serialSelect = document.getElementById("serialSelect");
 const refreshPortsBtn = document.getElementById("refreshPortsBtn");
@@ -31,11 +37,13 @@ const STORAGE_KEYS = {
   lowC: "thermal_web_low_c",
   highC: "thermal_web_high_c",
 };
+const REQUEST_TIMEOUT_MS = 15000;
 
 let paused = false;
 let latestFrame = null;
 let socket = null;
 let availablePorts = [];
+let selectedGalleryFile = "";
 
 const state = {
   palette: localStorage.getItem(STORAGE_KEYS.palette) || "thermal",
@@ -46,35 +54,35 @@ const state = {
 
 const paletteTables = {
   thermal: buildPalette([
-    [0.00, [0, 0, 0]],
+    [0.0, [0, 0, 0]],
     [0.16, [0, 24, 112]],
     [0.34, [0, 100, 255]],
-    [0.50, [0, 210, 255]],
+    [0.5, [0, 210, 255]],
     [0.66, [80, 255, 120]],
     [0.82, [255, 225, 54]],
     [0.92, [255, 96, 0]],
-    [1.00, [255, 255, 255]],
+    [1.0, [255, 255, 255]],
   ]),
   rainbow: buildPalette([
-    [0.00, [0, 0, 120]],
-    [0.20, [0, 96, 255]],
-    [0.40, [0, 224, 255]],
+    [0.0, [0, 0, 120]],
+    [0.2, [0, 96, 255]],
+    [0.4, [0, 224, 255]],
     [0.58, [0, 255, 96]],
     [0.75, [255, 240, 0]],
     [0.88, [255, 128, 0]],
-    [1.00, [255, 0, 0]],
+    [1.0, [255, 0, 0]],
   ]),
   iron: buildPalette([
-    [0.00, [0, 0, 0]],
+    [0.0, [0, 0, 0]],
     [0.25, [64, 0, 64]],
-    [0.50, [160, 32, 0]],
+    [0.5, [160, 32, 0]],
     [0.75, [255, 128, 0]],
-    [0.90, [255, 220, 110]],
-    [1.00, [255, 255, 255]],
+    [0.9, [255, 220, 110]],
+    [1.0, [255, 255, 255]],
   ]),
   gray: buildPalette([
-    [0.00, [0, 0, 0]],
-    [1.00, [255, 255, 255]],
+    [0.0, [0, 0, 0]],
+    [1.0, [255, 255, 255]],
   ]),
 };
 
@@ -141,7 +149,7 @@ function celsiusToTemp14(tempC) {
 }
 
 function formatTemp(tempC) {
-  return `${tempC.toFixed(2)} \u00b0C`;
+  return `${tempC.toFixed(2)} °C`;
 }
 
 function resizeCanvas() {
@@ -165,7 +173,7 @@ function roundRect(context, x, y, width, height, radius) {
 function drawRoundedLabel(x, y, text, fillStyle, strokeStyle) {
   const padX = 8;
   ctx.save();
-  ctx.font = "600 14px Segoe UI, sans-serif";
+  ctx.font = "600 14px Microsoft YaHei, Segoe UI, sans-serif";
   const metrics = ctx.measureText(text);
   const boxWidth = metrics.width + padX * 2;
   const boxHeight = 24;
@@ -282,8 +290,8 @@ function drawFrame(frame) {
     }
   }
 
-  lowRangeValue.textContent = `${lowRangeSlider.value} \u00b0C`;
-  highRangeValue.textContent = `${highRangeSlider.value} \u00b0C`;
+  lowRangeValue.textContent = `${lowRangeSlider.value} °C`;
+  highRangeValue.textContent = `${highRangeSlider.value} °C`;
 }
 
 function syncRangeControlsFromState() {
@@ -291,8 +299,8 @@ function syncRangeControlsFromState() {
   autoRangeCheck.checked = state.autoRange;
   lowRangeSlider.disabled = state.autoRange;
   highRangeSlider.disabled = state.autoRange;
-  lowRangeValue.textContent = `${Number(lowRangeSlider.value)} \u00b0C`;
-  highRangeValue.textContent = `${Number(highRangeSlider.value)} \u00b0C`;
+  lowRangeValue.textContent = `${Number(lowRangeSlider.value)} °C`;
+  highRangeValue.textContent = `${Number(highRangeSlider.value)} °C`;
 }
 
 function persistDisplayState() {
@@ -309,6 +317,69 @@ function setStatus(status) {
   statusChip.textContent = status.status || "待连接";
   serialPortEl.textContent = status.serial_port || "-";
   baudRateEl.textContent = status.baud_rate || "-";
+}
+
+function setGalleryStatus(text, isError = false) {
+  galleryStatusEl.textContent = text;
+  galleryStatusEl.classList.toggle("error", isError);
+}
+
+function setSelectedGalleryFile(fileName) {
+  selectedGalleryFile = fileName || "";
+  downloadSelectedBtn.disabled = selectedGalleryFile.length === 0;
+
+  const listItems = galleryListEl.querySelectorAll("li[data-file-name]");
+  for (const item of listItems) {
+    item.classList.toggle("selected", item.dataset.fileName === selectedGalleryFile);
+  }
+}
+
+function renderGalleryList(files) {
+  galleryListEl.innerHTML = "";
+  if (!files || files.length === 0) {
+    setSelectedGalleryFile("");
+    const item = document.createElement("li");
+    item.textContent = "SD 中暂无截图";
+    galleryListEl.appendChild(item);
+    return;
+  }
+
+  for (const fileName of files) {
+    const item = document.createElement("li");
+    item.textContent = fileName;
+    item.dataset.fileName = fileName;
+    item.tabIndex = 0;
+    item.addEventListener("click", () => {
+      setSelectedGalleryFile(fileName);
+      setGalleryStatus(`已选择 ${fileName}`);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setSelectedGalleryFile(fileName);
+        setGalleryStatus(`已选择 ${fileName}`);
+      }
+    });
+    galleryListEl.appendChild(item);
+  }
+
+  setSelectedGalleryFile(files[files.length - 1] || "");
+  if (selectedGalleryFile) {
+    setGalleryStatus(`已选择 ${selectedGalleryFile}`);
+  }
+}
+
+function setDownloadLink(downloadUrl, label) {
+  if (!downloadUrl) {
+    galleryDownloadWrapEl.classList.add("hidden");
+    galleryDownloadLinkEl.href = "#";
+    galleryDownloadLinkEl.textContent = "";
+    return;
+  }
+
+  galleryDownloadLinkEl.href = downloadUrl;
+  galleryDownloadLinkEl.textContent = label || "打开下载文件";
+  galleryDownloadWrapEl.classList.remove("hidden");
 }
 
 function updatePortSelect(currentPort) {
@@ -344,17 +415,28 @@ async function loadPorts() {
   }
 }
 
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timerId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const data = await response.json();
+    return { response, data };
+  } finally {
+    window.clearTimeout(timerId);
+  }
+}
+
 async function connectSerial() {
   const serialPort = serialSelect.value || AUTO_PORT;
   connectBtn.disabled = true;
-  connectBtn.textContent = "连接中";
+  connectBtn.textContent = "连接中...";
   try {
-    const response = await fetch("/api/connect", {
+    const { response, data } = await fetchJsonWithTimeout("/api/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ serial_port: serialPort }),
     });
-    const data = await response.json();
     setStatus(data.status || null);
     availablePorts = data.ports || availablePorts;
     updatePortSelect((data.status && data.status.serial_port) || serialPort);
@@ -364,6 +446,61 @@ async function connectSerial() {
   } finally {
     connectBtn.disabled = false;
     connectBtn.textContent = "连接";
+  }
+}
+
+async function syncGallery() {
+  syncGalleryBtn.disabled = true;
+  downloadSelectedBtn.disabled = true;
+  setGalleryStatus("正在同步 SD 图库...");
+  try {
+    const { response, data } = await fetchJsonWithTimeout("/api/gallery/list", { method: "POST" });
+    if (!response.ok) {
+      throw new Error(data.error || "同步失败");
+    }
+    renderGalleryList(data.files || []);
+    setGalleryStatus(`已同步 ${data.count || 0} 张截图`);
+  } catch (error) {
+    console.error(error);
+    const message = error.name === "AbortError" ? "请求超时，请重试" : error.message;
+    setGalleryStatus(`同步失败：${message}`, true);
+  } finally {
+    syncGalleryBtn.disabled = false;
+    downloadSelectedBtn.disabled = selectedGalleryFile.length === 0;
+  }
+}
+
+async function downloadSelectedSnapshot() {
+  if (!selectedGalleryFile) {
+    setGalleryStatus("请先从列表里选择一张截图", true);
+    return;
+  }
+
+  syncGalleryBtn.disabled = true;
+  downloadSelectedBtn.disabled = true;
+  setGalleryStatus(`正在下载 ${selectedGalleryFile}...`);
+  setDownloadLink("", "");
+  try {
+    const { response, data } = await fetchJsonWithTimeout("/api/gallery/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_name: selectedGalleryFile }),
+    }, 20000);
+    if (!response.ok) {
+      throw new Error(data.error || "下载失败");
+    }
+
+    setGalleryStatus(`下载完成：${data.saved_name}`);
+    setDownloadLink(data.download_url, `打开 ${data.saved_name}`);
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    await syncGallery();
+  } catch (error) {
+    console.error(error);
+    const message = error.name === "AbortError" ? "请求超时，请重试" : error.message;
+    setGalleryStatus(`下载失败：${message}`, true);
+  } finally {
+    syncGalleryBtn.disabled = false;
+    downloadSelectedBtn.disabled = selectedGalleryFile.length === 0;
   }
 }
 
@@ -400,7 +537,7 @@ function connectWebSocket() {
   };
 
   socket.onclose = () => {
-    statusChip.textContent = "重连中";
+    statusChip.textContent = "重连中...";
     setTimeout(connectWebSocket, 1000);
   };
 
@@ -419,11 +556,6 @@ function connectWebSocket() {
     }
 
     if (message.type === "frame") {
-      setStatus({
-        status: "实时预览",
-        serial_port: serialPortEl.textContent,
-        baud_rate: baudRateEl.textContent,
-      });
       renderFrame(message.data);
     }
   };
@@ -439,6 +571,8 @@ function bindUi() {
   shotBtn.addEventListener("click", takeSnapshot);
   refreshPortsBtn.addEventListener("click", loadPorts);
   connectBtn.addEventListener("click", connectSerial);
+  syncGalleryBtn.addEventListener("click", syncGallery);
+  downloadSelectedBtn.addEventListener("click", downloadSelectedSnapshot);
 
   paletteSelect.addEventListener("change", () => {
     state.palette = paletteSelect.value;
@@ -460,8 +594,8 @@ function bindUi() {
     }
     state.lowC = Number(lowRangeSlider.value);
     state.highC = Number(highRangeSlider.value);
-    lowRangeValue.textContent = `${lowRangeSlider.value} \u00b0C`;
-    highRangeValue.textContent = `${highRangeSlider.value} \u00b0C`;
+    lowRangeValue.textContent = `${lowRangeSlider.value} °C`;
+    highRangeValue.textContent = `${highRangeSlider.value} °C`;
     persistDisplayState();
     rerenderLatestFrame();
   });
@@ -472,8 +606,8 @@ function bindUi() {
     }
     state.lowC = Number(lowRangeSlider.value);
     state.highC = Number(highRangeSlider.value);
-    lowRangeValue.textContent = `${lowRangeSlider.value} \u00b0C`;
-    highRangeValue.textContent = `${highRangeSlider.value} \u00b0C`;
+    lowRangeValue.textContent = `${lowRangeSlider.value} °C`;
+    highRangeValue.textContent = `${highRangeSlider.value} °C`;
     persistDisplayState();
     rerenderLatestFrame();
   });
@@ -498,6 +632,8 @@ function init() {
   resizeCanvas();
   loadPorts();
   connectWebSocket();
+  downloadSelectedBtn.disabled = true;
+  renderGalleryList([]);
 }
 
 init();

@@ -26,6 +26,8 @@
 #include <math.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
 
 #include "main.h"
 #include "lvgl.h"
@@ -34,6 +36,7 @@
 #include "gui_guider.h"
 #include "events_init.h"
 #include "custom.h"
+#include "app_filex.h"
 #include "libirtemp.h"
 #include "Tiny1C/tiny1c_thermal_app.h"
 #include "usart.h"
@@ -77,6 +80,18 @@ typedef struct __attribute__((packed))
 #define CFG_UART_STREAM_PACKET_TYPE_TEMP14    0x0001U
 #define CFG_UART_STREAM_PERIOD_SECONDS        1U
 #define CFG_UART_STREAM_PERIOD_TICKS          ((TX_TIMER_TICKS_PER_SECOND >= 1U) ? (CFG_UART_STREAM_PERIOD_SECONDS * TX_TIMER_TICKS_PER_SECOND) : 1U)
+#define CFG_UART_COMMAND_THREAD_STACK_SIZE    4096U
+#define CFG_UART_COMMAND_THREAD_PRIORITY      16U
+#define CFG_UART_COMMAND_RX_TIMEOUT_MS        20U
+#define CFG_UART_FILE_WEB_TIMEOUT_MS          4000U
+#define CFG_UART_COMMAND_LINE_MAX             96U
+#define CFG_UART_COMMAND_TX_LINE_MAX          768U
+#define CFG_UART_FILE_BASE64_CHUNK_BYTES      384U
+#define CFG_UART_FILE_BASE64_CHUNK_TEXT       (((CFG_UART_FILE_BASE64_CHUNK_BYTES + 2U) / 3U) * 4U)
+#define CFG_UART_FILE_MAX_LISTED_SNAPSHOTS    32U
+#define CFG_UART_FILE_NAME_STRIDE             CFG_APP_FILEX_SNAPSHOT_NAME_LEN
+#define CFG_UART_FILE_MAX_PIXELS              (CFG_GUI_FULLSCREEN_WIDTH * CFG_GUI_FULLSCREEN_HEIGHT)
+#define CFG_UART_FILE_WEB_TIMEOUT_TICKS       (((CFG_UART_FILE_WEB_TIMEOUT_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
 #define CFG_LIBIRTEMP_TEST_EMISSIVITY         0.95F
 #define CFG_LIBIRTEMP_TEST_TAU_Q14            16384U
 #define CFG_LIBIRTEMP_TEST_AMBIENT_TEMP_C     25.0F
@@ -100,13 +115,17 @@ typedef struct __attribute__((packed))
 static TX_THREAD g_thermal_thread;
 static TX_THREAD g_gui_thread;
 static TX_THREAD g_uart_stream_thread;
+static TX_THREAD g_uart_command_thread;
 static TX_THREAD g_extrema_query_thread;
 static ULONG g_thermal_thread_stack[CFG_THERMAL_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_gui_thread_stack[CFG_GUI_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_uart_stream_thread_stack[CFG_UART_STREAM_THREAD_STACK_SIZE / sizeof(ULONG)];
+static ULONG g_uart_command_thread_stack[CFG_UART_COMMAND_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_extrema_query_thread_stack[CFG_EXTREMA_QUERY_THREAD_STACK_SIZE / sizeof(ULONG)];
 static volatile float g_libirtemp_probe_sink_c = 0.0f;
 static volatile uint8_t g_uart_stream_tx_busy = 0U;
+static volatile uint32_t g_uart_file_hold_mask = 0U;
+static volatile ULONG g_uart_web_file_hold_expire_tick = 0U;
 static volatile uint8_t g_tiny1c_app_started = 0U;
 static volatile uint8_t g_extrema_cache_valid = 0U;
 static volatile uint16_t g_extrema_cache_min_temp14 = 0U;
@@ -117,9 +136,15 @@ static volatile uint16_t g_extrema_cache_max_temp_x = 0U;
 static volatile uint16_t g_extrema_cache_max_temp_y = 0U;
 static uint8_t g_uart_stream_tx_buffer[sizeof(app_threadx_uart_stream_header_t) + CFG_UART_STREAM_PAYLOAD_BYTES]
   __attribute__((aligned(32)));
+static uint8_t g_uart_command_rx_line[CFG_UART_COMMAND_LINE_MAX];
+static uint8_t g_uart_command_tx_line[CFG_UART_COMMAND_TX_LINE_MAX];
+static uint8_t g_uart_file_chunk_base64[CFG_UART_FILE_BASE64_CHUNK_TEXT + 4U];
+static CHAR g_uart_file_snapshot_names[CFG_UART_FILE_MAX_LISTED_SNAPSHOTS][CFG_UART_FILE_NAME_STRIDE];
 static lv_img_dsc_t g_gui_preview_img_dsc;
 static lv_img_dsc_t g_gui_fullscreen_img_dsc;
 static uint16_t g_gui_fullscreen_rgb565_frame[CFG_GUI_FULLSCREEN_WIDTH * CFG_GUI_FULLSCREEN_HEIGHT]
+  __attribute__((section(".EXTRAM"), aligned(32)));
+static uint16_t g_uart_file_rgb565_frame[CFG_UART_FILE_MAX_PIXELS]
   __attribute__((section(".EXTRAM"), aligned(32)));
 
 /* USER CODE END PV */
@@ -129,7 +154,22 @@ static uint16_t g_gui_fullscreen_rgb565_frame[CFG_GUI_FULLSCREEN_WIDTH * CFG_GUI
 static VOID app_threadx_thermal_thread_entry(ULONG thread_input);
 static VOID app_threadx_gui_thread_entry(ULONG thread_input);
 static VOID app_threadx_uart_stream_thread_entry(ULONG thread_input);
+static VOID app_threadx_uart_command_thread_entry(ULONG thread_input);
 static VOID app_threadx_extrema_query_thread_entry(ULONG thread_input);
+static void app_threadx_uart_process_command_line(const uint8_t *command_line_ptr);
+static UINT app_threadx_uart_send_text(const char *text_ptr);
+static UINT app_threadx_uart_send_text_fmt(const char *format_ptr, ...);
+static void app_threadx_uart_wait_for_tx_idle(void);
+static uint8_t app_threadx_uart_file_mode_active_internal(void);
+static void app_threadx_uart_file_hold_set(uint32_t hold_mask);
+static void app_threadx_uart_file_hold_clear(uint32_t hold_mask);
+static UINT app_threadx_uart_send_snapshot_list(void);
+static UINT app_threadx_uart_send_snapshot_latest(void);
+static UINT app_threadx_uart_send_snapshot_named(const CHAR *file_name_ptr);
+static uint32_t app_threadx_base64_encode(const uint8_t *input_ptr,
+                                          uint32_t input_size,
+                                          char *output_ptr,
+                                          uint32_t output_capacity);
 static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const uint16_t *temp14_frame, uint32_t frame_counter);
 static void app_threadx_uart_stream_clean_dcache(void *buffer_addr, uint32_t buffer_size);
 static int32_t app_threadx_temp14_to_centi_celsius(uint16_t temp14_value);
@@ -230,6 +270,21 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
     return ret;
   }
 
+  ret = tx_thread_create(&g_uart_command_thread,
+                         "uart_command_thread",
+                         app_threadx_uart_command_thread_entry,
+                         0U,
+                         g_uart_command_thread_stack,
+                         sizeof(g_uart_command_thread_stack),
+                         CFG_UART_COMMAND_THREAD_PRIORITY,
+                         CFG_UART_COMMAND_THREAD_PRIORITY,
+                         TX_NO_TIME_SLICE,
+                         TX_AUTO_START);
+  if (ret != TX_SUCCESS)
+  {
+    return ret;
+  }
+
   ret = tx_thread_create(&g_extrema_query_thread,
                          "extrema_query_thread",
                          app_threadx_extrema_query_thread_entry,
@@ -264,6 +319,49 @@ void MX_ThreadX_Init(void)
 }
 
 /* USER CODE BEGIN 1 */
+/**
+  * @brief  Request UART file mode for one owner.
+  * @param  hold_mask Bit mask describing the requester.
+  * @retval None
+  */
+void app_uart_request_file_mode(uint32_t hold_mask)
+{
+  if (hold_mask != 0U)
+  {
+    g_uart_file_hold_mask |= hold_mask;
+    if ((hold_mask & APP_UART_FILE_HOLD_WEB) != 0U)
+    {
+      g_uart_web_file_hold_expire_tick = tx_time_get() + ((CFG_UART_FILE_WEB_TIMEOUT_TICKS > 0U) ? CFG_UART_FILE_WEB_TIMEOUT_TICKS : 1U);
+    }
+  }
+}
+
+/**
+  * @brief  Release UART file mode for one owner.
+  * @param  hold_mask Bit mask describing the requester.
+  * @retval None
+  */
+void app_uart_release_file_mode(uint32_t hold_mask)
+{
+  if (hold_mask != 0U)
+  {
+    g_uart_file_hold_mask &= ~hold_mask;
+    if ((hold_mask & APP_UART_FILE_HOLD_WEB) != 0U)
+    {
+      g_uart_web_file_hold_expire_tick = 0U;
+    }
+  }
+}
+
+/**
+  * @brief  Report whether UART file mode is currently active.
+  * @retval uint8_t 1 when file mode is active, otherwise 0.
+  */
+uint8_t app_uart_is_file_mode_active(void)
+{
+  return app_threadx_uart_file_mode_active_internal();
+}
+
 /**
   * @brief  Apply libirtemp environment compensation to a temperature sample.
   * @param  emissivity Emissivity in range [0, 1].
@@ -962,6 +1060,416 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
 }
 
 /**
+  * @brief  Report whether any owner currently holds UART file mode.
+  * @retval uint8_t 1 when file mode is active, otherwise 0.
+  */
+static uint8_t app_threadx_uart_file_mode_active_internal(void)
+{
+  return (g_uart_file_hold_mask != 0U) ? 1U : 0U;
+}
+
+/**
+  * @brief  Set one UART file-mode hold bit.
+  * @param  hold_mask Owner bit mask.
+  * @retval None
+  */
+static void app_threadx_uart_file_hold_set(uint32_t hold_mask)
+{
+  app_uart_request_file_mode(hold_mask);
+}
+
+/**
+  * @brief  Clear one UART file-mode hold bit.
+  * @param  hold_mask Owner bit mask.
+  * @retval None
+  */
+static void app_threadx_uart_file_hold_clear(uint32_t hold_mask)
+{
+  app_uart_release_file_mode(hold_mask);
+}
+
+/**
+  * @brief  Wait until any in-flight UART DMA transmission completes.
+  * @retval None
+  */
+static void app_threadx_uart_wait_for_tx_idle(void)
+{
+  while (g_uart_stream_tx_busy != 0U)
+  {
+    tx_thread_sleep(1U);
+  }
+}
+
+/**
+  * @brief  Send one text response over USART1 using blocking mode.
+  * @param  text_ptr Null-terminated ASCII text.
+  * @retval UINT HAL/FileX-style status code.
+  */
+static UINT app_threadx_uart_send_text(const char *text_ptr)
+{
+  HAL_StatusTypeDef hal_status;
+  uint32_t text_length;
+
+  if (text_ptr == NULL)
+  {
+    return FX_PTR_ERROR;
+  }
+
+  text_length = (uint32_t)strlen(text_ptr);
+  if (text_length == 0U)
+  {
+    return FX_SUCCESS;
+  }
+
+  app_threadx_uart_wait_for_tx_idle();
+  g_uart_stream_tx_busy = 1U;
+  hal_status = HAL_UART_Transmit(&huart1, (uint8_t *)(uintptr_t)text_ptr, (uint16_t)text_length, 5000U);
+  g_uart_stream_tx_busy = 0U;
+  return (hal_status == HAL_OK) ? FX_SUCCESS : FX_IO_ERROR;
+}
+
+/**
+  * @brief  Format and send one text response over USART1.
+  * @param  format_ptr Printf-style format string.
+  * @retval UINT HAL/FileX-style status code.
+  */
+static UINT app_threadx_uart_send_text_fmt(const char *format_ptr, ...)
+{
+  int text_length;
+  va_list args;
+
+  if (format_ptr == NULL)
+  {
+    return FX_PTR_ERROR;
+  }
+
+  va_start(args, format_ptr);
+  text_length = vsnprintf((char *)g_uart_command_tx_line, sizeof(g_uart_command_tx_line), format_ptr, args);
+  va_end(args);
+  if ((text_length < 0) || ((uint32_t)text_length >= sizeof(g_uart_command_tx_line)))
+  {
+    return FX_BUFFER_ERROR;
+  }
+
+  return app_threadx_uart_send_text((const char *)g_uart_command_tx_line);
+}
+
+/**
+  * @brief  Encode one binary chunk into Base64 text.
+  * @param  input_ptr Source byte buffer.
+  * @param  input_size Number of source bytes.
+  * @param  output_ptr Output text buffer.
+  * @param  output_capacity Size of @p output_ptr in bytes.
+  * @retval uint32_t Number of output bytes written without terminator.
+  */
+static uint32_t app_threadx_base64_encode(const uint8_t *input_ptr,
+                                          uint32_t input_size,
+                                          char *output_ptr,
+                                          uint32_t output_capacity)
+{
+  static const char g_base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  uint32_t input_index = 0U;
+  uint32_t output_index = 0U;
+
+  if ((input_ptr == NULL) || (output_ptr == NULL))
+  {
+    return 0U;
+  }
+
+  while (input_index < input_size)
+  {
+    uint32_t remain = input_size - input_index;
+    uint8_t b0 = input_ptr[input_index++];
+    uint8_t b1 = (remain > 1U) ? input_ptr[input_index++] : 0U;
+    uint8_t b2 = (remain > 2U) ? input_ptr[input_index++] : 0U;
+
+    if ((output_index + 4U) >= output_capacity)
+    {
+      return 0U;
+    }
+
+    output_ptr[output_index++] = g_base64_table[(b0 >> 2) & 0x3FU];
+    output_ptr[output_index++] = g_base64_table[((b0 & 0x03U) << 4) | ((b1 >> 4) & 0x0FU)];
+    output_ptr[output_index++] = (remain > 1U) ? g_base64_table[((b1 & 0x0FU) << 2) | ((b2 >> 6) & 0x03U)] : '=';
+    output_ptr[output_index++] = (remain > 2U) ? g_base64_table[b2 & 0x3FU] : '=';
+  }
+
+  output_ptr[output_index] = '\0';
+  return output_index;
+}
+
+/**
+  * @brief  Send the current snapshot file list over the serial file protocol.
+  * @retval UINT FileX status code.
+  */
+static UINT app_threadx_uart_send_snapshot_list(void)
+{
+  UINT status;
+  uint32_t entry_count = 0U;
+  uint32_t entry_index;
+
+  status = app_filex_snapshot_get_list((CHAR *)g_uart_file_snapshot_names,
+                                       CFG_UART_FILE_MAX_LISTED_SNAPSHOTS,
+                                       CFG_UART_FILE_NAME_STRIDE,
+                                       &entry_count);
+  if (status != FX_SUCCESS)
+  {
+    return status;
+  }
+
+  status = app_threadx_uart_send_text_fmt("LIST %lu\n", (unsigned long)entry_count);
+  if (status != FX_SUCCESS)
+  {
+    return status;
+  }
+
+  for (entry_index = 0U; entry_index < entry_count; entry_index++)
+  {
+    status = app_threadx_uart_send_text_fmt("NAME %s\n", g_uart_file_snapshot_names[entry_index]);
+    if (status != FX_SUCCESS)
+    {
+      return status;
+    }
+  }
+
+  return app_threadx_uart_send_text("LIST_END\n");
+}
+
+/**
+  * @brief  Send one named snapshot as raw RGB565 chunks over the serial file protocol.
+  * @param  file_name_ptr Snapshot file name in THMxxxxx.BMP format.
+  * @retval UINT FileX/HAL status code.
+  */
+static UINT app_threadx_uart_send_snapshot_named(const CHAR *file_name_ptr)
+{
+  UINT status;
+  uint16_t width = 0U;
+  uint16_t height = 0U;
+  uint32_t total_bytes;
+  const uint8_t *payload_ptr;
+  uint32_t payload_offset = 0U;
+  uint32_t sequence = 0U;
+
+  if (file_name_ptr == NULL)
+  {
+    return FX_PTR_ERROR;
+  }
+
+  status = app_filex_snapshot_load_rgb565(file_name_ptr,
+                                          g_uart_file_rgb565_frame,
+                                          CFG_UART_FILE_MAX_PIXELS,
+                                          &width,
+                                          &height);
+  if (status != FX_SUCCESS)
+  {
+    return status;
+  }
+
+  total_bytes = (uint32_t)width * (uint32_t)height * sizeof(uint16_t);
+  payload_ptr = (const uint8_t *)(const void *)g_uart_file_rgb565_frame;
+
+  status = app_threadx_uart_send_text_fmt("FILE_BEGIN %s %u %u %lu\n",
+                                          file_name_ptr,
+                                          (unsigned int)width,
+                                          (unsigned int)height,
+                                          (unsigned long)total_bytes);
+  if (status != FX_SUCCESS)
+  {
+    return status;
+  }
+
+  while (payload_offset < total_bytes)
+  {
+    uint32_t chunk_bytes = total_bytes - payload_offset;
+    uint32_t encoded_bytes;
+
+    if (chunk_bytes > CFG_UART_FILE_BASE64_CHUNK_BYTES)
+    {
+      chunk_bytes = CFG_UART_FILE_BASE64_CHUNK_BYTES;
+    }
+
+    encoded_bytes = app_threadx_base64_encode(&payload_ptr[payload_offset],
+                                              chunk_bytes,
+                                              (char *)g_uart_file_chunk_base64,
+                                              sizeof(g_uart_file_chunk_base64));
+    if (encoded_bytes == 0U)
+    {
+      return FX_BUFFER_ERROR;
+    }
+
+    status = app_threadx_uart_send_text_fmt("DATA %lu %s\n",
+                                            (unsigned long)sequence,
+                                            g_uart_file_chunk_base64);
+    if (status != FX_SUCCESS)
+    {
+      return status;
+    }
+
+    payload_offset += chunk_bytes;
+    sequence++;
+  }
+
+  return app_threadx_uart_send_text("FILE_END\n");
+}
+
+/**
+  * @brief  Send the latest available snapshot over the serial file protocol.
+  * @retval UINT FileX/HAL status code.
+  */
+static UINT app_threadx_uart_send_snapshot_latest(void)
+{
+  UINT status;
+  uint32_t entry_count = 0U;
+
+  status = app_filex_snapshot_get_list((CHAR *)g_uart_file_snapshot_names,
+                                       CFG_UART_FILE_MAX_LISTED_SNAPSHOTS,
+                                       CFG_UART_FILE_NAME_STRIDE,
+                                       &entry_count);
+  if (status != FX_SUCCESS)
+  {
+    return status;
+  }
+  if (entry_count == 0U)
+  {
+    return FX_NO_MORE_ENTRIES;
+  }
+
+  return app_threadx_uart_send_snapshot_named(g_uart_file_snapshot_names[entry_count - 1U]);
+}
+
+/**
+  * @brief  Process one ASCII file-protocol command line.
+  * @param  command_line_ptr Null-terminated command text.
+  * @retval None
+  */
+static void app_threadx_uart_process_command_line(const uint8_t *command_line_ptr)
+{
+  UINT status = FX_SUCCESS;
+  const char *command_ptr = (const char *)command_line_ptr;
+  const char *actual_mode_text = NULL;
+
+  if ((command_line_ptr == NULL) || (command_line_ptr[0] == '\0'))
+  {
+    return;
+  }
+
+  if (strcmp(command_ptr, "FILE_ENTER") == 0)
+  {
+    app_threadx_uart_file_hold_set(APP_UART_FILE_HOLD_WEB);
+    status = app_filex_prepare();
+    if (status == FX_SUCCESS)
+    {
+      actual_mode_text = (app_threadx_uart_file_mode_active_internal() != 0U) ? "FILE_MODE" : "STREAM_MODE";
+      (void)app_threadx_uart_send_text_fmt("OK %s\n", actual_mode_text);
+    }
+    else
+    {
+      app_threadx_uart_file_hold_clear(APP_UART_FILE_HOLD_WEB);
+      (void)app_threadx_uart_send_text_fmt("ERR %s\n", app_filex_status_to_string(status));
+    }
+    return;
+  }
+
+  if (strcmp(command_ptr, "FILE_EXIT") == 0)
+  {
+    app_threadx_uart_file_hold_clear(APP_UART_FILE_HOLD_WEB);
+    actual_mode_text = (app_threadx_uart_file_mode_active_internal() != 0U) ? "FILE_MODE" : "STREAM_MODE";
+    (void)app_threadx_uart_send_text_fmt("OK %s\n", actual_mode_text);
+    return;
+  }
+
+  if ((strcmp(command_ptr, "FILE_LIST") == 0) || (strcmp(command_ptr, "FILE_GET_LATEST") == 0) ||
+      (strncmp(command_ptr, "FILE_GET ", 9) == 0))
+  {
+    app_threadx_uart_file_hold_set(APP_UART_FILE_HOLD_WEB);
+    g_uart_web_file_hold_expire_tick = tx_time_get() + ((CFG_UART_FILE_WEB_TIMEOUT_TICKS > 0U) ? CFG_UART_FILE_WEB_TIMEOUT_TICKS : 1U);
+  }
+
+  if (strcmp(command_ptr, "FILE_LIST") == 0)
+  {
+    status = app_threadx_uart_send_snapshot_list();
+  }
+  else if (strcmp(command_ptr, "FILE_GET_LATEST") == 0)
+  {
+    status = app_threadx_uart_send_snapshot_latest();
+  }
+  else if (strncmp(command_ptr, "FILE_GET ", 9) == 0)
+  {
+    status = app_threadx_uart_send_snapshot_named((const CHAR *)(command_ptr + 9));
+  }
+  else
+  {
+    status = FX_INVALID_PATH;
+  }
+
+  if (status != FX_SUCCESS)
+  {
+    (void)app_threadx_uart_send_text_fmt("ERR %s\n", app_filex_status_to_string(status));
+  }
+}
+
+/**
+  * @brief  UART command thread entry for gallery/file transfer commands.
+  * @param  thread_input Unused thread input parameter.
+  * @retval None
+  */
+static VOID app_threadx_uart_command_thread_entry(ULONG thread_input)
+{
+  uint32_t command_length = 0U;
+
+  TX_PARAMETER_NOT_USED(thread_input);
+
+  for (;;)
+  {
+    uint8_t rx_byte = 0U;
+    HAL_StatusTypeDef hal_status;
+    ULONG tick_now;
+
+    if ((g_uart_file_hold_mask & APP_UART_FILE_HOLD_WEB) != 0U)
+    {
+      tick_now = tx_time_get();
+      if (((int32_t)(tick_now - g_uart_web_file_hold_expire_tick) >= 0) && (g_uart_web_file_hold_expire_tick != 0U))
+      {
+        app_threadx_uart_file_hold_clear(APP_UART_FILE_HOLD_WEB);
+      }
+    }
+
+    hal_status = HAL_UART_Receive(&huart1, &rx_byte, 1U, CFG_UART_COMMAND_RX_TIMEOUT_MS);
+    if (hal_status != HAL_OK)
+    {
+      tx_thread_sleep(1U);
+      continue;
+    }
+
+    if (rx_byte == '\r')
+    {
+      continue;
+    }
+
+    if (rx_byte == '\n')
+    {
+      g_uart_command_rx_line[command_length] = '\0';
+      if (command_length > 0U)
+      {
+        app_threadx_uart_process_command_line(g_uart_command_rx_line);
+      }
+      command_length = 0U;
+      continue;
+    }
+
+    if (command_length < (sizeof(g_uart_command_rx_line) - 1U))
+    {
+      g_uart_command_rx_line[command_length++] = rx_byte;
+    }
+    else
+    {
+      command_length = 0U;
+      (void)app_threadx_uart_send_text("ERR Buffer\n");
+    }
+  }
+}
+
+/**
   * @brief  UART streaming thread entry.
   * @param  thread_input Unused thread input parameter.
   * @retval None
@@ -983,6 +1491,12 @@ static VOID app_threadx_uart_stream_thread_entry(ULONG thread_input)
     IrPoint_t center_point;
 
     if (g_tiny1c_app_started == 0U)
+    {
+      tx_thread_sleep(10U);
+      continue;
+    }
+
+    if (app_threadx_uart_file_mode_active_internal() != 0U)
     {
       tx_thread_sleep(10U);
       continue;

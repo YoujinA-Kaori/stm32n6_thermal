@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "app_filex.h"
+#include "app_threadx.h"
 
 #define CFG_THERMAL_GUI_SNAPSHOT_MAX_WIDTH       640U
 #define CFG_THERMAL_GUI_SNAPSHOT_MAX_HEIGHT      480U
@@ -822,6 +823,8 @@ static void thermal_gui_gallery_open_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED)
     {
+        app_uart_request_file_mode(APP_UART_FILE_HOLD_GUI);
+        thermal_gui_snapshot_set_status("图库模式，串口流已暂停");
         thermal_gui_gallery_open((lv_ui *)lv_event_get_user_data(e));
     }
 }
@@ -835,6 +838,8 @@ static void thermal_gui_gallery_back_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED)
     {
+        app_uart_release_file_mode(APP_UART_FILE_HOLD_GUI);
+        thermal_gui_snapshot_set_status("已退出图库，串口流恢复");
         thermal_gui_gallery_close((lv_ui *)lv_event_get_user_data(e));
     }
 }
