@@ -38,6 +38,7 @@
 #include "custom.h"
 #include "app_filex.h"
 #include "libirtemp.h"
+#include "thermal_ai_runtime.h"
 #include "Tiny1C/tiny1c_thermal_app.h"
 #include "usart.h"
 #include "RGBLCD/rgblcd.h"
@@ -100,7 +101,7 @@ typedef struct __attribute__((packed))
 #define CFG_GUI_OVERLAY_UPDATE_PERIOD_MS      120U
 #define CFG_EXTREMA_QUERY_THREAD_STACK_SIZE   2048U
 #define CFG_EXTREMA_QUERY_THREAD_PRIORITY     18U
-#define CFG_EXTREMA_QUERY_PERIOD_MS           200U
+#define CFG_EXTREMA_QUERY_PERIOD_MS           80U
 #define CFG_EXTREMA_QUERY_PERIOD_TICKS        (((CFG_EXTREMA_QUERY_PERIOD_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
 
 /* USER CODE END PD */
@@ -811,10 +812,14 @@ static void app_threadx_gui_update_preview_layer(lv_obj_t *preview_img,
   image_x = lv_obj_get_x(preview_img);
   image_y = lv_obj_get_y(preview_img);
 
-  max_disp_x = mirror_enable ? ((int32_t)frame_width - 1 - (int32_t)max_temp_x) : (int32_t)max_temp_x;
-  max_disp_y = flip_enable ? ((int32_t)frame_height - 1 - (int32_t)max_temp_y) : (int32_t)max_temp_y;
-  min_disp_x = mirror_enable ? ((int32_t)frame_width - 1 - (int32_t)min_temp_x) : (int32_t)min_temp_x;
-  min_disp_y = flip_enable ? ((int32_t)frame_height - 1 - (int32_t)min_temp_y) : (int32_t)min_temp_y;
+  (void)mirror_enable;
+  (void)flip_enable;
+  tiny1c_thermal_app_transform_frame_point(max_temp_x, max_temp_y, &max_temp_x, &max_temp_y);
+  tiny1c_thermal_app_transform_frame_point(min_temp_x, min_temp_y, &min_temp_x, &min_temp_y);
+  max_disp_x = (int32_t)max_temp_x;
+  max_disp_y = (int32_t)max_temp_y;
+  min_disp_x = (int32_t)min_temp_x;
+  min_disp_y = (int32_t)min_temp_y;
 
   max_label_x = image_x + max_disp_x * ((int32_t)preview_width / (int32_t)frame_width) + 4;
   max_label_y = image_y + max_disp_y * ((int32_t)preview_height / (int32_t)frame_height) - 12;
@@ -1576,6 +1581,8 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
   uint16_t min_temp14 = 0xFFFFU;
   uint16_t max_temp14 = 0U;
   uint16_t center_temp14;
+  uint8_t mirror_enable;
+  uint8_t flip_enable;
 
   if ((tx_buffer == NULL) || (temp14_frame == NULL))
   {
@@ -1584,8 +1591,9 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
 
   header_ptr = (app_threadx_uart_stream_header_t *)tx_buffer;
   payload_ptr = (uint16_t *)(void *)(tx_buffer + sizeof(app_threadx_uart_stream_header_t));
-  center_temp14 = temp14_frame[((CFG_UART_STREAM_SOURCE_HEIGHT / 2U) * CFG_UART_STREAM_SOURCE_WIDTH) +
-                               (CFG_UART_STREAM_SOURCE_WIDTH / 2U)];
+  mirror_enable = tiny1c_thermal_app_get_preview_mirror_enabled();
+  flip_enable = tiny1c_thermal_app_get_preview_flip_enabled();
+  center_temp14 = 0U;
 
   for (y_out = 0U; y_out < CFG_UART_STREAM_FRAME_HEIGHT; y_out++)
   {
@@ -1601,11 +1609,16 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
 
       for (y_inner = 0U; y_inner < CFG_UART_STREAM_DOWNSAMPLE_STEP_Y; y_inner++)
       {
-        uint32_t row_index = (y_base + y_inner) * CFG_UART_STREAM_SOURCE_WIDTH;
+        uint32_t source_y = y_base + y_inner;
+        uint32_t mapped_source_y = (flip_enable != 0U) ? ((CFG_UART_STREAM_SOURCE_HEIGHT - 1U) - source_y) : source_y;
+        uint32_t row_index = mapped_source_y * CFG_UART_STREAM_SOURCE_WIDTH;
 
         for (x_inner = 0U; x_inner < CFG_UART_STREAM_DOWNSAMPLE_STEP_X; x_inner++)
         {
-          sum_temp14 += temp14_frame[row_index + x_base + x_inner];
+          uint32_t source_x = x_base + x_inner;
+          uint32_t mapped_source_x = (mirror_enable != 0U) ? ((CFG_UART_STREAM_SOURCE_WIDTH - 1U) - source_x) : source_x;
+
+          sum_temp14 += temp14_frame[row_index + mapped_source_x];
         }
       }
 
@@ -1623,6 +1636,9 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
       }
     }
   }
+
+  center_temp14 = payload_ptr[((CFG_UART_STREAM_FRAME_HEIGHT / 2U) * CFG_UART_STREAM_FRAME_WIDTH) +
+                              (CFG_UART_STREAM_FRAME_WIDTH / 2U)];
 
   header_ptr->sync_word = CFG_UART_STREAM_SYNC_WORD;
   header_ptr->packet_type = CFG_UART_STREAM_PACKET_TYPE_TEMP14;

@@ -858,3 +858,98 @@ Likely next task in the next conversation:
 - 当前这轮结论可以概括为：
   - **控制命令稳定性优先通过 VDCMD mutex 解决**
   - **高低温标记刷新慢属于模组查询耗时带来的自然代价，不能简单靠缩短线程周期解决**
+
+## 2026-06-04 Thermal AI Detection Notes
+
+- `thermal_ai/` has now been upgraded from `classification + heatmap` into a **lightweight object-detection workflow**.
+- Current retained top-level classes are:
+  - `empty`
+  - `person`
+  - `hand`
+  - `hot_object`
+  - `circuit_board_normal`
+  - `circuit_board_abnormal_hotspot`
+- Detector-active classes are all non-empty classes above.
+- The current AI route is:
+  - raw `temp14 .bin`
+  - bbox sidecar `.json`
+  - lightweight anchor-free grid detector
+  - `Keras -> TFLite -> CubeAI`
+
+### Detection Training / Annotation
+
+- The annotation tool file is still named:
+  - `thermal_ai/scripts/annotate_centerpoints.py`
+- But it is now a **bounding-box annotation tool**, not a center-point tool.
+- Sidecar format is now `bbox xyxy`, with:
+  - `x_min`
+  - `y_min`
+  - `x_max`
+  - `y_max`
+- Dataset / detector config:
+  - `thermal_ai/configs/dataset_config.json`
+- The detector is a lightweight `15x20` grid head, not YOLO.
+
+### Coordinate Alignment Conclusion
+
+- A key fix in this round is that **UART temp14 stream orientation is now aligned with the current preview orientation**.
+- LCD default preview still uses:
+  - mirror enabled
+  - flip enabled
+- UART packet payload generation in `Appli/Core/Src/app_threadx.c` now applies the same orientation before sending the frame.
+- Therefore the following are intended to share the same coordinate convention:
+  - LCD default preview
+  - new UART-exported temp14 stream
+  - thermal AI annotation preview
+  - thermal AI detection output coordinates
+
+### Board-Side Coordinate Transform Helper
+
+- New helper API added:
+  - `tiny1c_thermal_app_transform_frame_point()`
+- Files:
+  - `STM32CubeIDE/Appli/BSP/Tiny1C/tiny1c_thermal_app.h`
+  - `STM32CubeIDE/Appli/BSP/Tiny1C/tiny1c_thermal_app.c`
+- Purpose:
+  - convert one raw temp14 frame coordinate into the current preview-oriented coordinate
+  - keep overlays and future AI boxes synchronized with `mirror/flip`
+
+### Thermal AI Runtime Module
+
+- A new standalone runtime module has been added:
+  - `Appli/Core/Inc/thermal_ai_runtime.h`
+  - `Appli/Core/Src/thermal_ai_runtime.c`
+- This module is intended to avoid further bloating `app_threadx.c`.
+- It currently provides:
+  - AI result structures
+  - detection / bbox structures
+  - application mode enum
+  - alarm state enum
+  - consecutive-frame abnormal confirmation
+  - capture latch for evidence snapshot
+  - frame-to-preview point scaling helper
+  - frame-to-preview bbox scaling helper
+
+### Runtime Integration Status
+
+- `thermal_ai_runtime.c` has been added to project metadata in:
+  - `STM32CubeIDE/Appli/.project`
+- The source itself has been compiled successfully with `arm-none-eabi-gcc`.
+- A managed build from `STM32CubeIDE/Appli/Debug` also completes successfully.
+- If CubeIDE does not immediately show the new file in the project tree, do:
+  - `Refresh`
+  - then re-check managed project resource sync
+
+### Recommended Next Step
+
+- Continue using `thermal_ai_runtime.*` as the single home for:
+  - alarm policy
+  - application mode policy
+  - AI result cache
+  - bbox scaling helpers
+- Keep `app_threadx.c` focused on:
+  - thread scheduling
+  - data acquisition
+  - calling runtime helpers
+- Keep GUI-facing rendering logic mainly in:
+  - `STM32CubeIDE/Appli/gui_guider/custom/custom.c`

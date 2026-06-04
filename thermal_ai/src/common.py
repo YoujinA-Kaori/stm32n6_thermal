@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Shared helpers for the STM32N6 thermal five-class AI workflow."""
+"""Shared helpers for the STM32N6 thermal object-detection workflow."""
 
 from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,14 +33,70 @@ class SampleRecord:
 
 
 @dataclass(frozen=True)
-class HeatmapAnnotation:
-    """Normalized annotation for one thermal frame."""
+class AnnotatedObject:
+    """One annotated bounding box inside a thermal frame."""
 
-    class_name: str | None
-    center_x: float | None
-    center_y: float | None
-    sigma_px: float
+    class_name: str
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
+
+    @property
+    def center_x(self) -> float:
+        """Return the horizontal box center in pixel coordinates."""
+        return (self.x_min + self.x_max) * 0.5
+
+    @property
+    def center_y(self) -> float:
+        """Return the vertical box center in pixel coordinates."""
+        return (self.y_min + self.y_max) * 0.5
+
+    @property
+    def width(self) -> float:
+        """Return the box width in pixels."""
+        return max(self.x_max - self.x_min, 1.0)
+
+    @property
+    def height(self) -> float:
+        """Return the box height in pixels."""
+        return max(self.y_max - self.y_min, 1.0)
+
+    @property
+    def area(self) -> float:
+        """Return the box area in pixels."""
+        return self.width * self.height
+
+
+@dataclass(frozen=True)
+class SampleAnnotation:
+    """Normalized multi-object annotation for one thermal frame."""
+
+    primary_class_name: str | None
+    objects: tuple[AnnotatedObject, ...]
     is_empty: bool
+
+
+@dataclass(frozen=True)
+class Detection:
+    """One decoded detector prediction or ground-truth box."""
+
+    class_name: str
+    score: float
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
+
+    @property
+    def center_x(self) -> float:
+        """Return the horizontal box center in pixel coordinates."""
+        return (self.x_min + self.x_max) * 0.5
+
+    @property
+    def center_y(self) -> float:
+        """Return the vertical box center in pixel coordinates."""
+        return (self.y_min + self.y_max) * 0.5
 
 
 def load_json(json_path: Path) -> dict[str, Any]:
@@ -95,43 +152,109 @@ def load_sidecar_annotation(bin_path: Path) -> dict[str, Any] | None:
     return load_json(annotation_path)
 
 
-def normalize_sidecar_annotation(
-    annotation_payload: dict[str, Any] | None,
-    default_sigma_px: float,
-) -> HeatmapAnnotation | None:
-    """Normalize a raw sidecar annotation payload into a typed record."""
+def _center_payload_to_box(object_payload: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    """Convert a legacy center-point payload into a small fallback box."""
+    center_x = object_payload.get("center_x", object_payload.get("x"))
+    center_y = object_payload.get("center_y", object_payload.get("y"))
+    if center_x is None or center_y is None:
+        return None
+
+    box_width = float(object_payload.get("box_width_px", object_payload.get("box_size_px", 8.0)))
+    box_height = float(object_payload.get("box_height_px", object_payload.get("box_size_px", 8.0)))
+    half_width = max(box_width, 1.0) * 0.5
+    half_height = max(box_height, 1.0) * 0.5
+    return (
+        float(center_x) - half_width,
+        float(center_y) - half_height,
+        float(center_x) + half_width,
+        float(center_y) + half_height,
+    )
+
+
+def normalize_sidecar_annotation(annotation_payload: dict[str, Any] | None) -> SampleAnnotation | None:
+    """Normalize a raw sidecar annotation payload into a typed bbox record."""
     if annotation_payload is None:
         return None
 
-    class_name = annotation_payload.get("class_name")
-    is_empty = bool(annotation_payload.get("empty", False)) or class_name == "empty"
-    center_x = annotation_payload.get("center_x", annotation_payload.get("x"))
-    center_y = annotation_payload.get("center_y", annotation_payload.get("y"))
-    sigma_px = float(annotation_payload.get("heatmap_sigma_px", annotation_payload.get("sigma_px", default_sigma_px)))
+    primary_class_name = annotation_payload.get("primary_class_name", annotation_payload.get("class_name"))
+    is_empty = bool(annotation_payload.get("empty", False)) or primary_class_name == "empty"
+    objects_payload = annotation_payload.get("objects")
+    objects: list[AnnotatedObject] = []
 
-    if center_x is None or center_y is None:
-        if is_empty:
-            return HeatmapAnnotation(
-                class_name=str(class_name) if class_name is not None else None,
-                center_x=None,
-                center_y=None,
-                sigma_px=sigma_px,
-                is_empty=True,
+    if isinstance(objects_payload, list):
+        for object_payload in objects_payload:
+            if not isinstance(object_payload, dict):
+                continue
+
+            class_name = object_payload.get("class_name")
+            if class_name is None or class_name == "empty":
+                continue
+
+            x_min = object_payload.get("x_min")
+            y_min = object_payload.get("y_min")
+            x_max = object_payload.get("x_max")
+            y_max = object_payload.get("y_max")
+            if None in (x_min, y_min, x_max, y_max):
+                bbox_payload = object_payload.get("bbox")
+                if isinstance(bbox_payload, list) and len(bbox_payload) == 4:
+                    x_min, y_min, x_max, y_max = bbox_payload
+                else:
+                    legacy_box = _center_payload_to_box(object_payload)
+                    if legacy_box is None:
+                        continue
+                    x_min, y_min, x_max, y_max = legacy_box
+
+            x0 = float(x_min)
+            y0 = float(y_min)
+            x1 = float(x_max)
+            y1 = float(y_max)
+            objects.append(
+                AnnotatedObject(
+                    class_name=str(class_name),
+                    x_min=min(x0, x1),
+                    y_min=min(y0, y1),
+                    x_max=max(x0, x1),
+                    y_max=max(y0, y1),
+                )
             )
-        return None
+    else:
+        class_name = annotation_payload.get("class_name")
+        if class_name is not None and class_name != "empty":
+            legacy_box = _center_payload_to_box(annotation_payload)
+            if legacy_box is not None:
+                x_min, y_min, x_max, y_max = legacy_box
+                objects.append(
+                    AnnotatedObject(
+                        class_name=str(class_name),
+                        x_min=float(x_min),
+                        y_min=float(y_min),
+                        x_max=float(x_max),
+                        y_max=float(y_max),
+                    )
+                )
 
-    return HeatmapAnnotation(
-        class_name=str(class_name) if class_name is not None else None,
-        center_x=float(center_x),
-        center_y=float(center_y),
-        sigma_px=sigma_px,
-        is_empty=is_empty,
+    if not objects:
+        return SampleAnnotation(
+            primary_class_name=str(primary_class_name) if primary_class_name is not None else None,
+            objects=tuple(),
+            is_empty=True if is_empty or primary_class_name == "empty" else False,
+        )
+
+    return SampleAnnotation(
+        primary_class_name=str(primary_class_name) if primary_class_name is not None else None,
+        objects=tuple(objects),
+        is_empty=False,
     )
 
 
 def get_class_names(config: dict[str, Any]) -> list[str]:
     """Return the ordered class-name list."""
     return list(config["class_names"])
+
+
+def get_detection_class_names(config: dict[str, Any]) -> list[str]:
+    """Return the subset of class names that the detector predicts."""
+    return [class_name for class_name in get_class_names(config) if class_name != "empty"]
 
 
 def get_input_shape(config: dict[str, Any]) -> tuple[int, int, int]:
@@ -197,25 +320,244 @@ def temp14_preview_u8(frame_u16: np.ndarray, config: dict[str, Any]) -> np.ndarr
     return np.clip(np.round(normalized * 255.0), 0, 255).astype(np.uint8)
 
 
-def build_gaussian_heatmap(
-    height: int,
-    width: int,
-    center_x: float | None,
-    center_y: float | None,
-    sigma_px: float,
-) -> np.ndarray:
-    """Build a normalized 2D Gaussian heatmap for one frame."""
-    if center_x is None or center_y is None:
-        return np.zeros((height, width), dtype=np.float32)
+def clip_box_to_frame(box: AnnotatedObject, frame_width: int, frame_height: int) -> AnnotatedObject:
+    """Clamp a box to the valid frame bounds."""
+    x_min = min(max(float(box.x_min), 0.0), float(frame_width - 1))
+    y_min = min(max(float(box.y_min), 0.0), float(frame_height - 1))
+    x_max = min(max(float(box.x_max), x_min + 1.0), float(frame_width))
+    y_max = min(max(float(box.y_max), y_min + 1.0), float(frame_height))
+    return AnnotatedObject(box.class_name, x_min, y_min, x_max, y_max)
 
-    sigma_px = max(float(sigma_px), 1.0)
-    y_coords, x_coords = np.mgrid[0:height, 0:width]
-    squared_distance = (x_coords - float(center_x)) ** 2 + (y_coords - float(center_y)) ** 2
-    heatmap = np.exp(-squared_distance / (2.0 * sigma_px * sigma_px)).astype(np.float32)
-    peak = float(np.max(heatmap))
-    if peak > 0.0:
-        heatmap /= peak
-    return heatmap
+
+def get_annotation_object_counts(annotation: SampleAnnotation | None, class_names: list[str]) -> dict[str, int]:
+    """Count how many annotated objects belong to each class."""
+    counts = {class_name: 0 for class_name in class_names}
+    if annotation is None:
+        return counts
+    if annotation.is_empty or not annotation.objects:
+        if "empty" in counts:
+            counts["empty"] = 1
+        return counts
+    for annotated_object in annotation.objects:
+        if annotated_object.class_name in counts:
+            counts[annotated_object.class_name] += 1
+    return counts
+
+
+def annotation_to_detections(annotation: SampleAnnotation | None, config: dict[str, Any]) -> list[Detection]:
+    """Convert a normalized annotation into ground-truth detections."""
+    if annotation is None or annotation.is_empty or not annotation.objects:
+        return []
+
+    frame_height, frame_width = get_frame_shape(config)
+    detection_class_names = set(get_detection_class_names(config))
+    detections: list[Detection] = []
+    for annotated_object in annotation.objects:
+        if annotated_object.class_name not in detection_class_names:
+            continue
+        clipped_box = clip_box_to_frame(annotated_object, frame_width, frame_height)
+        detections.append(
+            Detection(
+                class_name=clipped_box.class_name,
+                score=1.0,
+                x_min=clipped_box.x_min,
+                y_min=clipped_box.y_min,
+                x_max=clipped_box.x_max,
+                y_max=clipped_box.y_max,
+            )
+        )
+    return detections
+
+
+def get_detector_grid_shape(config: dict[str, Any]) -> tuple[int, int]:
+    """Return the detector output grid height and width."""
+    detector_cfg = config["detector"]
+    return int(detector_cfg["grid_height"]), int(detector_cfg["grid_width"])
+
+
+def get_detector_output_channels(config: dict[str, Any]) -> int:
+    """Return the per-cell detector channel count."""
+    return 1 + 4 + len(get_detection_class_names(config))
+
+
+def get_detector_strides(config: dict[str, Any]) -> tuple[float, float]:
+    """Return detector stride in input pixels for X and Y."""
+    frame_height, frame_width = get_frame_shape(config)
+    grid_height, grid_width = get_detector_grid_shape(config)
+    return float(frame_width) / float(grid_width), float(frame_height) / float(grid_height)
+
+
+def count_detection_target_collisions(annotation: SampleAnnotation | None, config: dict[str, Any]) -> int:
+    """Count how many objects collide into already-occupied detector cells."""
+    if annotation is None or annotation.is_empty or not annotation.objects:
+        return 0
+
+    detection_class_names = set(get_detection_class_names(config))
+    grid_height, grid_width = get_detector_grid_shape(config)
+    stride_x, stride_y = get_detector_strides(config)
+    occupied_cells: set[tuple[int, int]] = set()
+    collisions = 0
+
+    for annotated_object in annotation.objects:
+        if annotated_object.class_name not in detection_class_names:
+            continue
+        grid_x = min(grid_width - 1, max(0, int(annotated_object.center_x / stride_x)))
+        grid_y = min(grid_height - 1, max(0, int(annotated_object.center_y / stride_y)))
+        cell_key = (grid_x, grid_y)
+        if cell_key in occupied_cells:
+            collisions += 1
+        else:
+            occupied_cells.add(cell_key)
+
+    return collisions
+
+
+def build_detection_target(annotation: SampleAnnotation | None, config: dict[str, Any]) -> np.ndarray:
+    """Encode one annotation into an anchor-free detector target tensor."""
+    grid_height, grid_width = get_detector_grid_shape(config)
+    frame_height, frame_width = get_frame_shape(config)
+    detection_class_names = get_detection_class_names(config)
+    class_to_index = {class_name: index for index, class_name in enumerate(detection_class_names)}
+    stride_x, stride_y = get_detector_strides(config)
+    target = np.zeros((grid_height, grid_width, get_detector_output_channels(config)), dtype=np.float32)
+
+    if annotation is None or annotation.is_empty or not annotation.objects:
+        return target
+
+    eps = 1e-4
+    for annotated_object in annotation.objects:
+        class_index = class_to_index.get(annotated_object.class_name)
+        if class_index is None:
+            continue
+
+        clipped_box = clip_box_to_frame(annotated_object, frame_width, frame_height)
+        center_x = clipped_box.center_x
+        center_y = clipped_box.center_y
+        grid_x = min(grid_width - 1, max(0, int(center_x / stride_x)))
+        grid_y = min(grid_height - 1, max(0, int(center_y / stride_y)))
+        current_width = target[grid_y, grid_x, 3] * float(frame_width)
+        current_height = target[grid_y, grid_x, 4] * float(frame_height)
+        current_area = current_width * current_height
+
+        if target[grid_y, grid_x, 0] > 0.0 and clipped_box.area <= current_area:
+            continue
+
+        target[grid_y, grid_x, :] = 0.0
+        target[grid_y, grid_x, 0] = 1.0
+        target[grid_y, grid_x, 1] = float(np.clip(center_x / stride_x - float(grid_x), eps, 1.0 - eps))
+        target[grid_y, grid_x, 2] = float(np.clip(center_y / stride_y - float(grid_y), eps, 1.0 - eps))
+        target[grid_y, grid_x, 3] = float(np.clip(clipped_box.width / float(frame_width), eps, 1.0 - eps))
+        target[grid_y, grid_x, 4] = float(np.clip(clipped_box.height / float(frame_height), eps, 1.0 - eps))
+        target[grid_y, grid_x, 5 + class_index] = 1.0
+
+    return target
+
+
+def sigmoid_array(values: np.ndarray) -> np.ndarray:
+    """Apply a numerically stable sigmoid to a NumPy array."""
+    clipped_values = np.clip(values, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(-clipped_values))
+
+
+def detection_iou(box_a: Detection | AnnotatedObject, box_b: Detection | AnnotatedObject) -> float:
+    """Compute IoU between two boxes."""
+    inter_x_min = max(float(box_a.x_min), float(box_b.x_min))
+    inter_y_min = max(float(box_a.y_min), float(box_b.y_min))
+    inter_x_max = min(float(box_a.x_max), float(box_b.x_max))
+    inter_y_max = min(float(box_a.y_max), float(box_b.y_max))
+    inter_width = max(inter_x_max - inter_x_min, 0.0)
+    inter_height = max(inter_y_max - inter_y_min, 0.0)
+    inter_area = inter_width * inter_height
+    if inter_area <= 0.0:
+        return 0.0
+
+    area_a = max(float(box_a.x_max) - float(box_a.x_min), 0.0) * max(float(box_a.y_max) - float(box_a.y_min), 0.0)
+    area_b = max(float(box_b.x_max) - float(box_b.x_min), 0.0) * max(float(box_b.y_max) - float(box_b.y_min), 0.0)
+    union_area = area_a + area_b - inter_area
+    if union_area <= 0.0:
+        return 0.0
+    return float(inter_area / union_area)
+
+
+def apply_detection_nms(detections: list[Detection], iou_threshold: float, max_detections: int) -> list[Detection]:
+    """Run per-class non-maximum suppression on decoded detections."""
+    kept: list[Detection] = []
+    class_names = sorted({detection.class_name for detection in detections})
+    for class_name in class_names:
+        class_detections = sorted(
+            [detection for detection in detections if detection.class_name == class_name],
+            key=lambda detection: detection.score,
+            reverse=True,
+        )
+        while class_detections and len(kept) < max_detections:
+            best = class_detections.pop(0)
+            kept.append(best)
+            class_detections = [
+                candidate
+                for candidate in class_detections
+                if detection_iou(best, candidate) < float(iou_threshold)
+            ]
+    kept.sort(key=lambda detection: detection.score, reverse=True)
+    return kept[:max_detections]
+
+
+def decode_detection_map(detection_map: np.ndarray, config: dict[str, Any]) -> list[Detection]:
+    """Decode one detector output tensor into scored bounding boxes."""
+    grid_height, grid_width = get_detector_grid_shape(config)
+    frame_height, frame_width = get_frame_shape(config)
+    detector_cfg = config["detector"]
+    stride_x, stride_y = get_detector_strides(config)
+    detection_class_names = get_detection_class_names(config)
+    objectness_threshold = float(detector_cfg["objectness_threshold"])
+    class_threshold = float(detector_cfg["class_threshold"])
+    nms_iou_threshold = float(detector_cfg["nms_iou_threshold"])
+    max_detections = int(detector_cfg["max_detections_per_image"])
+
+    if detection_map.shape[:2] != (grid_height, grid_width):
+        raise ValueError(
+            f"detection map shape mismatch: got {detection_map.shape[:2]}, expected {(grid_height, grid_width)}"
+        )
+
+    objectness_map = sigmoid_array(detection_map[..., 0])
+    bbox_map = sigmoid_array(detection_map[..., 1:5])
+    class_map = sigmoid_array(detection_map[..., 5:])
+
+    detections: list[Detection] = []
+    for grid_y in range(grid_height):
+        for grid_x in range(grid_width):
+            objectness_score = float(objectness_map[grid_y, grid_x])
+            if objectness_score < objectness_threshold:
+                continue
+
+            class_scores = class_map[grid_y, grid_x]
+            class_index = int(np.argmax(class_scores))
+            class_score = float(class_scores[class_index])
+            detection_score = objectness_score * class_score
+            if class_score < class_threshold or detection_score < class_threshold:
+                continue
+
+            offset_x, offset_y, width_norm, height_norm = bbox_map[grid_y, grid_x]
+            center_x = (float(grid_x) + float(offset_x)) * stride_x
+            center_y = (float(grid_y) + float(offset_y)) * stride_y
+            box_width = max(float(width_norm) * float(frame_width), 1.0)
+            box_height = max(float(height_norm) * float(frame_height), 1.0)
+            x_min = max(center_x - box_width * 0.5, 0.0)
+            y_min = max(center_y - box_height * 0.5, 0.0)
+            x_max = min(center_x + box_width * 0.5, float(frame_width))
+            y_max = min(center_y + box_height * 0.5, float(frame_height))
+
+            detections.append(
+                Detection(
+                    class_name=detection_class_names[class_index],
+                    score=detection_score,
+                    x_min=x_min,
+                    y_min=y_min,
+                    x_max=x_max,
+                    y_max=y_max,
+                )
+            )
+
+    return apply_detection_nms(detections, nms_iou_threshold, max_detections)
 
 
 def iter_bin_files(root_dir: Path) -> list[Path]:
@@ -262,7 +604,6 @@ def scan_processed_split(
                 group_key = relative_parent.as_posix()
 
             sidecar_path = annotation_path_for_bin(bin_path)
-
             samples.append(
                 SampleRecord(
                     split=split_name,
@@ -294,12 +635,19 @@ def to_python_scalar(value: Any) -> Any:
     return value
 
 
-def make_json_safe(payload: Any) -> Any:
-    """Recursively convert NumPy values inside a nested structure."""
-    if isinstance(payload, dict):
-        return {str(key): make_json_safe(value) for key, value in payload.items()}
-    if isinstance(payload, list):
-        return [make_json_safe(value) for value in payload]
-    if isinstance(payload, tuple):
-        return [make_json_safe(value) for value in payload]
-    return to_python_scalar(payload)
+def make_json_safe(value: Any) -> Any:
+    """Recursively convert NumPy-heavy data into JSON-safe Python objects."""
+    if isinstance(value, dict):
+        return {str(key): make_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [make_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (np.generic,)):
+        return to_python_scalar(value)
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+    return value

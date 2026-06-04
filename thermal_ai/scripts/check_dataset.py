@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate processed thermal datasets before training."""
+"""Validate processed thermal datasets before detection training."""
 
 from __future__ import annotations
 
@@ -15,10 +15,13 @@ import _bootstrap
 _bootstrap.setup_python_path()
 
 from src.common import (
+    count_detection_target_collisions,
+    get_annotation_object_counts,
     get_class_names,
+    get_detection_class_names,
     load_dataset_config,
-    load_temp14_frame,
     load_sidecar_annotation,
+    load_temp14_frame,
     make_json_safe,
     normalize_sidecar_annotation,
     resolve_workspace_path,
@@ -37,7 +40,9 @@ def inspect_split(
     stats: dict[str, Any] = {"classes": {}, "total_files": 0, "errors": []}
     split_samples = scan_processed_split(processed_root, split_name, class_names)
     stats["total_files"] = len(split_samples)
-    default_sigma_px = float(config["supervision"]["heatmap_sigma_px"])
+    frame_height = int(config["input"]["height"])
+    frame_width = int(config["input"]["width"])
+    detection_class_names = set(get_detection_class_names(config))
 
     grouped_samples: dict[str, list[Any]] = defaultdict(list)
     for sample in split_samples:
@@ -49,6 +54,8 @@ def inspect_split(
             "groups": 0,
             "annotations": 0,
             "missing_annotations": 0,
+            "annotated_objects": 0,
+            "detector_cell_collisions": 0,
             "min_temp_c": None,
             "max_temp_c": None,
             "mean_center_temp_c": None,
@@ -68,20 +75,46 @@ def inspect_split(
                 stats["errors"].append(f"{sample.bin_path}: {exc}")
                 continue
 
-            annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path), default_sigma_px)
+            annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path))
             if sample.class_name != "empty":
-                if annotation is None or annotation.center_x is None or annotation.center_y is None:
+                if annotation is None or annotation.is_empty or not annotation.objects:
                     class_stats["missing_annotations"] += 1
-                    stats["errors"].append(f"{sample.bin_path}: missing heatmap annotation for non-empty sample")
+                    stats["errors"].append(f"{sample.bin_path}: missing bbox annotation for non-empty sample")
                 else:
-                    if annotation.class_name is not None and annotation.class_name != sample.class_name:
+                    object_class_names = {annotated_object.class_name for annotated_object in annotation.objects}
+                    if sample.class_name not in object_class_names:
                         stats["errors"].append(
-                            f"{sample.bin_path}: annotation class mismatch "
-                            f"(sample={sample.class_name}, annotation={annotation.class_name})"
+                            f"{sample.bin_path}: primary folder class not present in annotation objects "
+                            f"(sample={sample.class_name}, objects={sorted(object_class_names)})"
                         )
+                    if annotation.primary_class_name is not None and annotation.primary_class_name != sample.class_name:
+                        stats["errors"].append(
+                            f"{sample.bin_path}: primary_class_name mismatch "
+                            f"(sample={sample.class_name}, annotation={annotation.primary_class_name})"
+                        )
+                    unknown_classes = sorted(object_class_names - detection_class_names)
+                    if unknown_classes:
+                        stats["errors"].append(f"{sample.bin_path}: unknown annotation classes {unknown_classes}")
+
+                    for annotated_object in annotation.objects:
+                        if not (0.0 <= annotated_object.x_min < annotated_object.x_max <= float(frame_width)):
+                            stats["errors"].append(f"{sample.bin_path}: invalid bbox x-range {annotated_object}")
+                        if not (0.0 <= annotated_object.y_min < annotated_object.y_max <= float(frame_height)):
+                            stats["errors"].append(f"{sample.bin_path}: invalid bbox y-range {annotated_object}")
+
                     class_stats["annotations"] += 1
+                    class_stats["annotated_objects"] += len(annotation.objects)
+                    class_stats["detector_cell_collisions"] += count_detection_target_collisions(annotation, config)
             elif annotation is not None:
+                if (not annotation.is_empty and annotation.objects) or (
+                    annotation.primary_class_name is not None and annotation.primary_class_name != "empty"
+                ):
+                    stats["errors"].append(f"{sample.bin_path}: sample is under empty folder but annotation is not empty-consistent")
                 class_stats["annotations"] += 1
+                class_stats["annotated_objects"] += (
+                    sum(get_annotation_object_counts(annotation, class_names).values())
+                    - get_annotation_object_counts(annotation, class_names).get("empty", 0)
+                )
 
             temp_c = frame_u16.astype(np.float32) / 16.0 - 273.15
             frame_min = float(np.min(temp_c))
@@ -141,6 +174,7 @@ def main() -> int:
             print(
                 f"  {class_name}: files={class_stats['files']} groups={class_stats['groups']} "
                 f"annotations={class_stats['annotations']} missing_ann={class_stats['missing_annotations']} "
+                f"objects={class_stats['annotated_objects']} collisions={class_stats['detector_cell_collisions']} "
                 f"min_c={class_stats['min_temp_c']} max_c={class_stats['max_temp_c']} "
                 f"center_mean_c={class_stats['mean_center_temp_c']}"
             )

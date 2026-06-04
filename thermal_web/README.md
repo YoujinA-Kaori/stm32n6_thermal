@@ -5,7 +5,6 @@ STM32N6 热成像串口网页上位机。
 ## 启动
 
 ```powershell
-pip install -r thermal_web/requirements.txt
 python thermal_web/app.py
 ```
 

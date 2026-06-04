@@ -130,6 +130,19 @@ uint8_t tiny1c_thermal_app_get_preview_mirror_enabled(void);
  */
 uint8_t tiny1c_thermal_app_get_preview_flip_enabled(void);
 
+/**
+ * @brief Map one raw temp14 frame coordinate into the current preview-oriented frame coordinate.
+ * @param source_x Source-frame X coordinate in range 0..159.
+ * @param source_y Source-frame Y coordinate in range 0..119.
+ * @param dest_x Pointer to the transformed X coordinate, may be NULL.
+ * @param dest_y Pointer to the transformed Y coordinate, may be NULL.
+ * @return None
+ */
+void tiny1c_thermal_app_transform_frame_point(uint16_t source_x,
+                                              uint16_t source_y,
+                                              uint16_t *dest_x,
+                                              uint16_t *dest_y);
+
 #ifdef __cplusplus
 }
 #endif

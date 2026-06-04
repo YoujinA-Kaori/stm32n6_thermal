@@ -1,10 +1,9 @@
 {
-  "epochs": 50,
-  "batch_size": 32,
+  "epochs": 60,
+  "batch_size": 24,
   "learning_rate": 0.001,
-  "heatmap_loss_weight": 1.0,
-  "early_stopping_patience": 8,
-  "reduce_lr_patience": 4,
+  "early_stopping_patience": 10,
+  "reduce_lr_patience": 5,
   "reduce_lr_factor": 0.5,
   "min_learning_rate": 1e-05,
   "seed": 42

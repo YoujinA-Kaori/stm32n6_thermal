@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export float32 and int8 TFLite models and compare them with Keras."""
+"""Export float32 and int8 TFLite detector models and compare them with Keras."""
 
 from __future__ import annotations
 
@@ -16,24 +16,28 @@ import _bootstrap
 _bootstrap.setup_python_path()
 
 from src.common import (
+    annotation_to_detections,
+    decode_detection_map,
     ensure_dir,
     get_class_names,
+    get_detection_class_names,
     load_dataset_config,
-    load_temp14_frame,
     load_sidecar_annotation,
+    load_temp14_frame,
     make_json_safe,
-    normalize_temp14_frame,
     normalize_sidecar_annotation,
+    normalize_temp14_frame,
     resolve_workspace_path,
     save_json,
     scan_processed_split,
 )
-from src.model import require_tensorflow
+from src.metrics import compute_detection_metrics
+from src.model import get_custom_objects, require_tensorflow
 from src.tflite_utils import inspect_tflite_model, load_tflite_interpreter, run_tflite_inference
 
 
 def select_balanced_samples(sample_records, class_names: list[str], limit: int, seed: int):
-    """Select a class-balanced sample subset for calibration or comparison."""
+    """Select a class-balanced subset using the primary class folder as the balancing key."""
     rng = random.Random(seed)
     buckets: dict[str, list[Any]] = defaultdict(list)
     for sample in sample_records:
@@ -65,54 +69,54 @@ def representative_dataset_generator(sample_records, config: dict[str, Any]):
         yield [frame_input[np.newaxis, ...].astype(np.float32)]
 
 
+def evaluate_detection_batches(prediction_maps: list[np.ndarray], sample_records, config: dict[str, Any]) -> dict[str, Any]:
+    """Decode detector outputs and compute dataset-level metrics."""
+    detection_class_names = get_detection_class_names(config)
+    iou_threshold = float(config["detector"]["eval_iou_threshold"])
+    ground_truth_batches = []
+    prediction_batches = []
+
+    for sample, prediction_map in zip(sample_records, prediction_maps):
+        annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path))
+        ground_truth_batches.append(annotation_to_detections(annotation, config))
+        prediction_batches.append(decode_detection_map(prediction_map, config))
+
+    return compute_detection_metrics(ground_truth_batches, prediction_batches, detection_class_names, iou_threshold)
+
+
 def compare_keras_and_tflite(model, tflite_path: Path, sample_records, config: dict[str, Any]) -> dict[str, Any]:
-    """Compare top-1 agreement and output deltas between Keras and TFLite."""
+    """Compare detector outputs and decoded metrics between Keras and TFLite."""
     interpreter = load_tflite_interpreter(tflite_path)
-    agreements = 0
-    max_abs_delta = 0.0
+    keras_prediction_maps = []
+    tflite_prediction_maps = []
     mean_abs_deltas: list[float] = []
-    keras_heatmap_errors: list[float] = []
-    tflite_heatmap_errors: list[float] = []
-    default_sigma_px = float(config["supervision"]["heatmap_sigma_px"])
+    max_abs_delta = 0.0
 
     for sample in sample_records:
         frame_u16 = load_temp14_frame(sample.bin_path, config)
         frame_input = normalize_temp14_frame(frame_u16, config, add_channel_axis=True)
-        keras_outputs = model.predict(frame_input[np.newaxis, ...], verbose=0)
-        keras_class_output = keras_outputs[0][0]
-        keras_heatmap_output = keras_outputs[1][0, ..., 0]
+        keras_prediction_map = model.predict(frame_input[np.newaxis, ...], verbose=0)[0]
         tflite_outputs = run_tflite_inference(interpreter, frame_input)
-        tflite_class_output = tflite_outputs[0][0]
-        tflite_heatmap_output = tflite_outputs[1][0, ..., 0]
-        if int(np.argmax(keras_class_output)) == int(np.argmax(tflite_class_output)):
-            agreements += 1
-        abs_delta = np.abs(keras_class_output - tflite_class_output)
-        max_abs_delta = max(max_abs_delta, float(np.max(abs_delta)))
+        tflite_prediction_map = tflite_outputs[0][0]
+        keras_prediction_maps.append(keras_prediction_map)
+        tflite_prediction_maps.append(tflite_prediction_map)
+
+        abs_delta = np.abs(keras_prediction_map - tflite_prediction_map)
         mean_abs_deltas.append(float(np.mean(abs_delta)))
+        max_abs_delta = max(max_abs_delta, float(np.max(abs_delta)))
 
-        annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path), default_sigma_px)
-        if sample.class_name != "empty" and annotation is not None and annotation.center_x is not None and annotation.center_y is not None:
-            keras_peak = np.unravel_index(int(np.argmax(keras_heatmap_output)), keras_heatmap_output.shape)
-            tflite_peak = np.unravel_index(int(np.argmax(tflite_heatmap_output)), tflite_heatmap_output.shape)
-            keras_error = float(np.sqrt((keras_peak[1] - annotation.center_x) ** 2 + (keras_peak[0] - annotation.center_y) ** 2))
-            tflite_error = float(np.sqrt((tflite_peak[1] - annotation.center_x) ** 2 + (tflite_peak[0] - annotation.center_y) ** 2))
-            keras_heatmap_errors.append(keras_error)
-            tflite_heatmap_errors.append(tflite_error)
-
-    total = len(sample_records)
     return {
-        "samples": total,
-        "top1_agreement": float(agreements / total) if total > 0 else 0.0,
-        "max_abs_delta": max_abs_delta,
+        "samples": len(sample_records),
         "mean_abs_delta": float(np.mean(mean_abs_deltas)) if mean_abs_deltas else 0.0,
-        "mean_keras_heatmap_peak_error_px": float(np.mean(keras_heatmap_errors)) if keras_heatmap_errors else None,
-        "mean_tflite_heatmap_peak_error_px": float(np.mean(tflite_heatmap_errors)) if tflite_heatmap_errors else None,
+        "max_abs_delta": max_abs_delta,
+        "keras_detection_metrics": evaluate_detection_batches(keras_prediction_maps, sample_records, config),
+        "tflite_detection_metrics": evaluate_detection_batches(tflite_prediction_maps, sample_records, config),
     }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
-    parser = argparse.ArgumentParser(description="Export float32 and int8 TFLite models")
+    parser = argparse.ArgumentParser(description="Export float32 and int8 TFLite detector models")
     parser.add_argument("--config", type=Path, default=None, help="Path to dataset_config.json")
     parser.add_argument("--processed-root", type=Path, default=None, help="Processed dataset root, default from config")
     parser.add_argument("--model", type=Path, default=None, help="Keras model path, default best_model.keras")
@@ -126,8 +130,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """Program entry point."""
-    tf_module = require_tensorflow()
     args = build_arg_parser().parse_args()
+    tf_module = require_tensorflow()
     dataset_config = load_dataset_config(args.config)
     class_names = get_class_names(dataset_config)
 
@@ -153,7 +157,7 @@ def main() -> int:
     if not model_path.exists():
         raise SystemExit(f"keras model not found: {model_path}")
 
-    model = tf_module.keras.models.load_model(model_path)
+    model = tf_module.keras.models.load_model(model_path, custom_objects=get_custom_objects())
     train_samples = scan_processed_split(processed_root, "train", class_names)
     test_samples = scan_processed_split(processed_root, "test", class_names)
     if not train_samples or not test_samples:
@@ -196,20 +200,16 @@ def main() -> int:
     print(f"float32 tflite: {float_tflite_path}")
     print(f"int8 tflite:    {int8_tflite_path}")
     print("")
-    print("float32 input/output:")
+    print("float32 inputs/outputs:")
     print(float_meta)
     print("")
-    print("int8 input/output:")
+    print("int8 inputs/outputs:")
     print(int8_meta)
     print("")
-    print(f"float32 top1 agreement: {float_compare['top1_agreement']:.4f}")
-    print(f"int8 top1 agreement:    {int8_compare['top1_agreement']:.4f}")
-    if float_compare["mean_keras_heatmap_peak_error_px"] is not None:
-        print(f"keras baseline heatmap error px: {float_compare['mean_keras_heatmap_peak_error_px']:.2f}")
-    if float_compare["mean_tflite_heatmap_peak_error_px"] is not None:
-        print(f"float32 tflite heatmap error px: {float_compare['mean_tflite_heatmap_peak_error_px']:.2f}")
-    if int8_compare["mean_tflite_heatmap_peak_error_px"] is not None:
-        print(f"int8 heatmap error px:    {int8_compare['mean_tflite_heatmap_peak_error_px']:.2f}")
+    print(f"float32 mean abs delta:      {float_compare['mean_abs_delta']:.6f}")
+    print(f"float32 micro f1@IoU:        {float_compare['tflite_detection_metrics']['micro_f1_score']:.4f}")
+    print(f"int8 mean abs delta:         {int8_compare['mean_abs_delta']:.6f}")
+    print(f"int8 micro f1@IoU:           {int8_compare['tflite_detection_metrics']['micro_f1_score']:.4f}")
     return 0
 
 

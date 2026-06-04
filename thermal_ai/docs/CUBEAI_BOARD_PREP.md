@@ -1,125 +1,78 @@
-# CubeAI 板端准备说明
+# CubeAI 板端接入准备
 
-## 1. 板端输入规则
+## 1. 板端输入原则
 
-STM32 端给 AI 的输入必须满足：
+CubeAI 板端输入仍然保持：
 
-- **160x120**
-- **单通道**
-- **解包后的原始 `temp14`**
+- `160x120`
+- 单通道
+- 解包后的原始 `temp14`
 
 不要使用：
 
-- 伪彩预览图
-- LCD 的 RGB565 画面
-- YUV 显示图像
-- 灰度预览图作为主路线输入
+- LCD 伪彩预览图
+- RGB565 显示缓冲
+- YUV 画面
 
-## 2. 预处理约定
+## 2. 预处理
 
-当前 Python 侧统一使用固定线性归一化：
+PC 侧和板端统一使用：
 
 ```text
 temp_c = raw_temp14 / 16.0 - 273.15
 normalized = clip((temp_c - 0.0) / 150.0, 0.0, 1.0)
 ```
 
-推荐 MCU 侧用下面这种浮点写法保持一致：
+## 3. 当前检测模型输出
 
-```c
-float temp_c = ((float)raw_temp14 / 16.0f) - 273.15f;
-float input_value = (temp_c - 0.0f) / 150.0f;
-if (input_value < 0.0f)
-{
-    input_value = 0.0f;
-}
-else if (input_value > 1.0f)
-{
-    input_value = 1.0f;
-}
-```
+当前模型不是 YOLO，而是轻量级 anchor-free grid detector。
 
-这一步应该直接作用在**已经解包好的温度矩阵**上，而不是任何预览图缓冲上。
+输出是一张 `15x20` 的检测网格，每个网格预测：
 
-## 3. CubeAI 部署顺序
+- `objectness`
+- `bbox`
+- `class logits`
 
-推荐顺序：
+后处理包括：
 
-1. 先训练并确认 `best_model.keras`
-2. 再导出并验证 `best_model_float32.tflite`
-3. 再导出并验证 `best_model_int8.tflite`
-4. 把确认过的模型导入 **ST CubeAI**
-5. 让 CubeAI 自动生成推理入口
-6. 只补最少的胶水代码：
-   - 原始 temp14 到归一化张量
-   - 推理触发
-   - 类别名映射
-   - 置信度阈值处理
+- `sigmoid`
+- 类别选择
+- bbox 解码
+- NMS
 
-## 4. 板端输出规则
+## 4. 当前坐标方向
 
-AI 当前建议输出：
+当前版本已经把串口温度流方向和默认 LCD 方向对齐：
 
-- `class_id`
-- `class_name`
-- `confidence`
-- `heatmap_peak_x`
-- `heatmap_peak_y`
+- MCU preview 默认 `mirror + flip`
+- UART 温度流也按当前 preview 方向输出
 
-可选 UI 文案：
+这样如果你在 PC 侧训练/验证得到一个检测框坐标，再映射回当前默认预览方向时，就不会出现整体反转。
 
-- `AI: person`
-- `Confidence: 93.2%`
-- `Target: (82, 56)`
-- `Status: Human Detected`
-- `uncertain`
+## 5. 当 MCU 端切换镜像/翻转时
 
-建议的低置信度规则：
+这版还补了固件坐标变换接口：
 
-```text
-if confidence < 0.60:
-    show "uncertain"
-```
+- `tiny1c_thermal_app_transform_frame_point()`
 
-## 5. 仍然保留在传统链路中的内容
+它可以把原始 temp14 坐标映射到当前 preview 方向。
 
-以下功能仍然建议继续走传统温度分析，不放进 AI：
+所以如果以后板端 CubeAI 推理仍然直接吃原始 `g_tiny1c_temp14_frame[]`，那也没问题：
 
-| 功能 | 建议归属 |
-| --- | --- |
-| 最高温点 | 传统温度分析 |
-| 最低温点 | 传统温度分析 |
-| 热点区域 | 传统温度分析 |
-| 位置框 / 区域高亮 | 传统温度分析 |
+1. AI 在原始 temp14 坐标系里输出 bbox / center
+2. UI 叠加前，用 `tiny1c_thermal_app_transform_frame_point()` 把坐标映射到当前镜像/翻转后的显示方向
+3. 再按实际显示尺寸缩放到预览区
 
-AI 只负责**主场景分类**。
+这样用户在设置页切换 `镜像 / 翻转` 时，检测框也能同步跟着变。
 
-如果当前模型启用了热图头，则 AI 还能提供：
+## 6. 建议接入顺序
 
-- 目标大概中心点
-- 热图峰值位置
-
-但完整外轮廓和精确热区边界仍然建议继续走传统算法。
-
-## 6. 固件集成优先级
-
-建议固件阶段按下面顺序接入：
-
-1. 保持当前热像主链稳定
-2. 在最新 `temp14` 帧上增加一次推理触发
-3. 把最新 AI 结果存到一个很小的共享状态块里
-4. 先只显示一行最小 UI
-5. 等真实板子验证后再调置信度阈值
-
-## 7. 建议的共享状态
-
-推荐最小状态字段：
-
-```text
-class_id
-confidence
-frame_counter
-valid_flag
-```
-
-这已经足够支持第一版演示，不需要引入不必要的 UI 或架构改动。
+1. 先把检测训练、TFLite 导出、PC 验证跑通
+2. 再用 CubeAI 导入 `best_model.keras` 或验证过的 `.tflite`
+3. 板端先只做：
+   - 预处理
+   - 推理
+   - bbox 解码
+   - `tiny1c_thermal_app_transform_frame_point()` 坐标变换
+   - UI 叠加
+4. 最后再做置信度阈值和显示策略微调

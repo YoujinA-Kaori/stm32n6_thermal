@@ -1,114 +1,102 @@
-# 中心点标注工具使用说明
+# 检测框标注工具使用说明
 
-这个工具用于给热成像 `.bin` 样本补**中心点标注**，配合当前的“分类 + 热图头”训练方案使用。
+虽然脚本文件名仍然是：
 
-工具文件：
+- [annotate_centerpoints.py](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/scripts/annotate_centerpoints.py)
 
-- [`thermal_ai/scripts/annotate_centerpoints.py`](../scripts/annotate_centerpoints.py)
+但它现在已经改成了 **bbox 检测框标注工具**。
 
 ## 1. 作用
 
 它会：
-
 - 读取 `temp14 .bin`
 - 自动生成灰度预览图
-- 允许你鼠标点击目标中心
-- 自动保存同名 `.json` 标注文件
+- 通过鼠标拖拽绘制目标框
+- 支持多目标、多类别
+- 自动保存同名 `.json`
 
-适用场景：
+## 2. 启动方式
 
-- `person`
-- `hand`
-- `hot_object`
-- `circuit_board_hotspot`
+建议使用工作区自带 Python：
 
-`empty` 场景可以直接标为空，不需要中心点。
+```powershell
+C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe thermal_ai\scripts\annotate_centerpoints.py --input thermal_ai_dataset\raw
+```
 
-## 2. 标注格式
+如果只想标某个 session：
 
-每个 `.bin` 对应一个同名 `.json`：
+```powershell
+C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe thermal_ai\scripts\annotate_centerpoints.py --input thermal_ai_dataset\raw\person\session_20260603_a
+```
+
+## 3. 操作方法
+
+1. 打开工具后，会显示当前 `.bin` 的灰度预览图
+2. 按数字键选择当前要画的类别
+3. 鼠标左键按下并拖拽，松开后生成一个 bbox
+4. 一张图里有多个目标，就继续拖多个框
+5. 如果框错了：
+   - 鼠标右键删除最近的框
+   - 或按 `Delete` 删除最后一个框
+6. 标完后按 `S` 或 `Enter` 保存并下一张
+7. 空场景按 `E`
+
+## 4. 快捷键
+
+| 按键 | 功能 |
+| --- | --- |
+| 鼠标左键拖拽 | 画一个框 |
+| 鼠标右键 | 删除最近的框 |
+| `1-5` | 切换类别 |
+| `S` / `Enter` | 保存并下一张 |
+| `E` | 标记为空并保存 |
+| `Delete` / `Backspace` | 删除最后一个框 |
+| `C` | 清空当前所有框 |
+| `Left` / `Right` | 上一张 / 下一张 |
+| `Q` / `Esc` | 退出 |
+
+默认数字键映射：
+
+1. `person`
+2. `hand`
+3. `hot_object`
+4. `circuit_board_normal`
+5. `circuit_board_abnormal_hotspot`
+
+## 5. 保存结果
+
+示例：
 
 ```text
 frame_0001.bin
 frame_0001.json
 ```
 
-非空样本示例：
+JSON 例子：
 
 ```json
 {
-  "class_name": "person",
-  "center_x": 82,
-  "center_y": 56,
-  "heatmap_sigma_px": 7.0
+  "primary_class_name": "person",
+  "objects": [
+    { "class_name": "person", "x_min": 28, "y_min": 18, "x_max": 84, "y_max": 108 },
+    { "class_name": "hot_object", "x_min": 108, "y_min": 40, "x_max": 136, "y_max": 74 }
+  ]
 }
 ```
 
-空场景示例：
+## 6. 目录规则
 
-```json
-{
-  "class_name": "empty",
-  "empty": true
-}
-```
+- 放在 `empty` 目录下的样本，才能标记为 `empty`
+- 如果样本在 `person/hand/...` 目录下，标注框里至少要有一个对应主类
+- 多目标样本只放在一个主类别目录里，不要复制到多个类目录
 
-## 3. 启动方式
+## 7. 方向说明
 
-建议使用工作区自带 Python，并确保它能访问 `Pillow`：
+当前工具按“和 MCU 默认画面一致”的方向理解样本。
 
-```powershell
-C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe thermal_ai\scripts\annotate_centerpoints.py --input thermal_ai_dataset\raw
-```
+也就是说：
+- 你在工具里画的 bbox
+- 未来推理出来的检测框坐标
+- MCU 默认预览方向
 
-如果只标某个子目录，也可以这样：
-
-```powershell
-C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe thermal_ai\scripts\annotate_centerpoints.py --input thermal_ai_dataset\raw\person\session_20260519_a
-```
-
-## 4. 操作步骤
-
-1. 打开工具后，会显示当前 `.bin` 的预览图。
-2. 鼠标左键点击目标大概中心。
-3. 按 `S` 或 `Enter` 保存并切到下一张。
-4. 空场景按 `E`，会保存为空标注。
-5. 如需删除当前标注，按 `Delete`。
-6. 需要切换类别时，按数字键 `1-5`。
-
-## 5. 快捷键
-
-| 按键 | 功能 |
-| --- | --- |
-| 鼠标左键 | 设置中心点 |
-| `S` / `Enter` | 保存并下一张 |
-| `E` | 标记为空并保存 |
-| `1-5` | 快速切换类别 |
-| `Left` / `Right` | 上一张 / 下一张 |
-| `Delete` / `Backspace` | 删除当前 JSON |
-| `Q` / `Esc` | 退出 |
-
-## 6. 标注原则
-
-- 坐标基于 **160x120** 原始温度矩阵
-- 左上角是 `(0, 0)`
-- 非空类必须有中心点
-- 中心点尽量标在**主体视觉中心**或**最高热区中心**
-- 不需要像目标检测那样追求框边界
-
-## 7. 建议工作流
-
-1. 先把原始 `.bin` 按类别和 session 整理好。
-2. 打开标注工具批量补 `.json`。
-3. 再运行：
-   ```powershell
-   python thermal_ai\scripts\split_dataset.py --overwrite
-   python thermal_ai\scripts\check_dataset.py --split all
-   ```
-4. 确认无误后再训练。
-
-## 8. 注意事项
-
-- 这个工具依赖 `Pillow`
-- 共享 `.venv` 里当前没有 `Pillow`，所以建议直接用工作区 Python
-- 不要把 `.bin` 和 `.json` 分开放丢失配对关系
+应当是对齐的，不再是互为反转。

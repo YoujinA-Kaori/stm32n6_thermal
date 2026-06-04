@@ -221,6 +221,11 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/app_threadx.c</locationURI>
 		</link>
 		<link>
+			<name>Application/User/Core/thermal_ai_runtime.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/thermal_ai_runtime.c</locationURI>
+		</link>
+		<link>
 			<name>Application/User/Core/dcmipp.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/dcmipp.c</locationURI>

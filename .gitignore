@@ -60,9 +60,17 @@ thermal_android_app/captures/
 
 # Web local cache
 thermal_web/__pycache__/
+thermal_web/downloads/
 
 # Generic helper cache
 tools/__pycache__/
+
+# Local assistant / workspace state
+.claude/
+.codex_headless_ws2/
+.headless-ws/
+.headless-ws2/
+.headless-ws3/
 
 # Optional large local data
 # Uncomment if you do not want to upload datasets

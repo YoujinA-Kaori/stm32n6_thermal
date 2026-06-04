@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the lightweight five-class CNN on processed temp14 frames."""
+"""Train the lightweight thermal object detector."""
 
 from __future__ import annotations
 
@@ -15,30 +15,25 @@ import _bootstrap
 _bootstrap.setup_python_path()
 
 from src.common import (
-    build_gaussian_heatmap,
+    annotation_to_detections,
+    build_detection_target,
+    count_detection_target_collisions,
     ensure_dir,
     get_class_names,
-    get_frame_shape,
-    get_input_shape,
+    get_detection_class_names,
     load_dataset_config,
+    load_sidecar_annotation,
     load_temp14_frame,
     load_train_config,
-    load_sidecar_annotation,
     make_json_safe,
+    normalize_sidecar_annotation,
     normalize_temp14_frame,
     resolve_workspace_path,
-    normalize_sidecar_annotation,
     save_json,
     scan_processed_split,
 )
-from src.metrics import (
-    build_collection_suggestions,
-    compute_classification_metrics,
-    compute_confusion_matrix,
-    format_classification_report,
-    format_confusion_matrix,
-)
-from src.model import build_cnn_model, require_tensorflow
+from src.metrics import build_collection_suggestions, compute_detection_metrics, format_detection_report
+from src.model import build_cnn_model, get_custom_objects, require_tensorflow
 
 
 def set_global_seed(seed: int) -> None:
@@ -49,6 +44,53 @@ def set_global_seed(seed: int) -> None:
     tf_module.random.set_seed(seed)
 
 
+def validate_sample_annotation(sample, config: dict[str, Any]) -> None:
+    """Ensure that one sample annotation is compatible with the detection workflow."""
+    annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path))
+    frame_height = int(config["input"]["height"])
+    frame_width = int(config["input"]["width"])
+    detection_class_names = set(get_detection_class_names(config))
+
+    if sample.class_name == "empty":
+        if annotation is not None and (
+            (not annotation.is_empty and annotation.objects)
+            or (annotation.primary_class_name is not None and annotation.primary_class_name != "empty")
+        ):
+            raise SystemExit(
+                f"sample is under empty folder but annotation is not empty-consistent: {sample.bin_path}"
+            )
+        return
+
+    if annotation is None or annotation.is_empty or not annotation.objects:
+        raise SystemExit(
+            f"missing bbox annotation for non-empty sample: {sample.bin_path} "
+            f"(expected a JSON sidecar with an objects list)"
+        )
+
+    annotated_class_names = {annotated_object.class_name for annotated_object in annotation.objects}
+    if sample.class_name not in annotated_class_names:
+        raise SystemExit(
+            f"primary folder class is not present in annotation objects: {sample.bin_path} "
+            f"(folder={sample.class_name}, objects={sorted(annotated_class_names)})"
+        )
+
+    if annotation.primary_class_name is not None and annotation.primary_class_name != sample.class_name:
+        raise SystemExit(
+            f"primary_class_name mismatch for {sample.bin_path}: "
+            f"folder={sample.class_name}, annotation={annotation.primary_class_name}"
+        )
+
+    unknown_classes = sorted(annotated_class_names - detection_class_names)
+    if unknown_classes:
+        raise SystemExit(f"unknown annotation classes in {sample.bin_path}: {unknown_classes}")
+
+    for annotated_object in annotation.objects:
+        if not (0.0 <= annotated_object.x_min < annotated_object.x_max <= float(frame_width)):
+            raise SystemExit(f"invalid bbox x-range in {sample.bin_path}: {annotated_object}")
+        if not (0.0 <= annotated_object.y_min < annotated_object.y_max <= float(frame_height)):
+            raise SystemExit(f"invalid bbox y-range in {sample.bin_path}: {annotated_object}")
+
+
 def build_tf_dataset(
     sample_records,
     config: dict[str, Any],
@@ -56,7 +98,7 @@ def build_tf_dataset(
     shuffle: bool,
     seed: int,
 ):
-    """Build a tf.data pipeline that reads raw temp14 .bin files on the fly."""
+    """Build a tf.data pipeline for anchor-free detection targets."""
     tf_module = require_tensorflow()
     records = list(sample_records)
     if not records:
@@ -66,66 +108,30 @@ def build_tf_dataset(
         rng = random.Random(seed)
         rng.shuffle(records)
 
-    height, width, channels = get_input_shape(config)
-    heatmap_height, heatmap_width = get_frame_shape(config)
-    default_sigma_px = float(config["supervision"]["heatmap_sigma_px"])
-
-    def validate_sample_annotation(sample) -> None:
-        """Ensure a sample has a usable center-point annotation when required."""
-        annotation_payload = load_sidecar_annotation(sample.bin_path)
-        annotation = normalize_sidecar_annotation(annotation_payload, default_sigma_px)
-        if sample.class_name == "empty":
-            return
-        if annotation is None or annotation.center_x is None or annotation.center_y is None:
-            raise SystemExit(
-                f"missing heatmap annotation for non-empty sample: {sample.bin_path} "
-                f"(expected a JSON sidecar with center_x/center_y)"
-            )
-        if annotation.class_name is not None and annotation.class_name != sample.class_name:
-            raise SystemExit(
-                f"annotation class mismatch for {sample.bin_path}: "
-                f"sample={sample.class_name}, annotation={annotation.class_name}"
-            )
+    height = int(config["input"]["height"])
+    width = int(config["input"]["width"])
+    channels = int(config["input"]["channels"])
+    grid_height = int(config["detector"]["grid_height"])
+    grid_width = int(config["detector"]["grid_width"])
+    output_channels = 1 + 4 + len(get_detection_class_names(config))
 
     for sample in records:
-        validate_sample_annotation(sample)
+        validate_sample_annotation(sample, config)
 
     def generator():
-        """Yield normalized frames and multi-task labels sample by sample."""
+        """Yield normalized input tensors plus detector supervision."""
         for sample in records:
             frame_u16 = load_temp14_frame(sample.bin_path, config)
             frame_input = normalize_temp14_frame(frame_u16, config, add_channel_axis=True).astype(np.float32)
-            annotation_payload = load_sidecar_annotation(sample.bin_path)
-            annotation = normalize_sidecar_annotation(annotation_payload, default_sigma_px)
-
-            if sample.class_name == "empty":
-                heatmap = np.zeros((heatmap_height, heatmap_width, 1), dtype=np.float32)
-            else:
-                heatmap_2d = build_gaussian_heatmap(
-                    heatmap_height,
-                    heatmap_width,
-                    annotation.center_x if annotation is not None else None,
-                    annotation.center_y if annotation is not None else None,
-                    annotation.sigma_px if annotation is not None else default_sigma_px,
-                )
-                heatmap = heatmap_2d[..., np.newaxis].astype(np.float32)
-
-            yield (
-                frame_input,
-                {
-                    "class_probs": np.int32(sample.label_index),
-                    "heatmap": heatmap,
-                },
-            )
+            annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path))
+            target = build_detection_target(annotation, config).astype(np.float32)
+            yield frame_input, target
 
     dataset = tf_module.data.Dataset.from_generator(
         generator,
         output_signature=(
             tf_module.TensorSpec(shape=(height, width, channels), dtype=tf_module.float32),
-            {
-                "class_probs": tf_module.TensorSpec(shape=(), dtype=tf_module.int32),
-                "heatmap": tf_module.TensorSpec(shape=(heatmap_height, heatmap_width, 1), dtype=tf_module.float32),
-            },
+            tf_module.TensorSpec(shape=(grid_height, grid_width, output_channels), dtype=tf_module.float32),
         ),
     )
     if shuffle:
@@ -135,59 +141,50 @@ def build_tf_dataset(
     return dataset
 
 
-def save_confusion_csv(confusion: np.ndarray, class_names: list[str], output_path: Path) -> None:
-    """Save the confusion matrix as a CSV table."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8", newline="") as fp:
-        fp.write("true/pred," + ",".join(class_names) + "\n")
-        for class_name, row in zip(class_names, confusion):
-            fp.write(class_name + "," + ",".join(str(int(value)) for value in row) + "\n")
-
-
-def evaluate_split(model, dataset, sample_records, split_name: str, class_names: list[str], config: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate one dataset split and collect full metrics."""
+def evaluate_split(model, dataset, sample_records, split_name: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate one dataset split and collect detection metrics."""
     evaluation = model.evaluate(dataset, verbose=0, return_dict=True)
-    predictions = model.predict(dataset, verbose=0)
-    class_probabilities = predictions[0]
-    heatmap_predictions = predictions[1]
-    y_pred = np.argmax(class_probabilities, axis=1).tolist()
-    y_true = [int(sample.label_index) for sample in sample_records]
-    confusion = compute_confusion_matrix(y_true, y_pred, len(class_names))
-    metrics = compute_classification_metrics(confusion)
-    default_sigma_px = float(config["supervision"]["heatmap_sigma_px"])
-    localization_errors: list[float] = []
-    class_accuracy = float(evaluation.get("class_probs_accuracy", evaluation.get("accuracy", 0.0)))
-    heatmap_mae = float(evaluation.get("heatmap_mae", evaluation.get("heatmap_mean_absolute_error", 0.0)))
+    prediction_maps = model.predict(dataset, verbose=0)
+    detection_class_names = get_detection_class_names(config)
+    iou_threshold = float(config["detector"]["eval_iou_threshold"])
 
-    for sample, heatmap_prediction in zip(sample_records, heatmap_predictions):
-        if sample.class_name == "empty":
-            continue
-        annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path), default_sigma_px)
-        if annotation is None or annotation.center_x is None or annotation.center_y is None:
-            continue
+    ground_truth_batches = []
+    prediction_batches = []
+    collision_count = 0
 
-        peak_index = int(np.argmax(heatmap_prediction[..., 0]))
-        peak_y, peak_x = np.unravel_index(peak_index, heatmap_prediction[..., 0].shape)
-        error_px = float(np.sqrt((peak_x - annotation.center_x) ** 2 + (peak_y - annotation.center_y) ** 2))
-        localization_errors.append(error_px)
+    for sample, prediction_map in zip(sample_records, prediction_maps):
+        annotation = normalize_sidecar_annotation(load_sidecar_annotation(sample.bin_path))
+        ground_truth_batches.append(annotation_to_detections(annotation, config))
+        prediction_batches.append(_bootstrap_import_decode_detection_map(prediction_map, config))
+        collision_count += count_detection_target_collisions(annotation, config)
 
+    detection_metrics = compute_detection_metrics(
+        ground_truth_batches,
+        prediction_batches,
+        detection_class_names,
+        iou_threshold,
+    )
     return {
         "split": split_name,
         "loss": float(evaluation.get("loss", 0.0)),
-        "class_accuracy": class_accuracy,
-        "heatmap_mae": heatmap_mae,
-        "mean_localization_error_px": float(np.mean(localization_errors)) if localization_errors else None,
-        "localization_samples": len(localization_errors),
-        "confusion_matrix": confusion,
-        "metrics": metrics,
-        "y_true": y_true,
-        "y_pred": y_pred,
+        "objectness_accuracy": float(evaluation.get("detection_objectness_accuracy", 0.0)),
+        "bbox_mae": float(evaluation.get("detection_bbox_mae", 0.0)),
+        "class_accuracy": float(evaluation.get("detection_class_accuracy", 0.0)),
+        "detection_metrics": detection_metrics,
+        "assignment_collisions": int(collision_count),
     }
+
+
+def _bootstrap_import_decode_detection_map(prediction_map: np.ndarray, config: dict[str, Any]):
+    """Delay import to keep top-level import list compact."""
+    from src.common import decode_detection_map
+
+    return decode_detection_map(prediction_map, config)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
-    parser = argparse.ArgumentParser(description="Train the STM32N6 thermal five-class classifier")
+    parser = argparse.ArgumentParser(description="Train the STM32N6 thermal object detector")
     parser.add_argument("--config", type=Path, default=None, help="Path to dataset_config.json")
     parser.add_argument("--train-config", type=Path, default=None, help="Path to train_config.json")
     parser.add_argument("--processed-root", type=Path, default=None, help="Processed dataset root, default from config")
@@ -198,11 +195,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     """Program entry point."""
-    tf_module = require_tensorflow()
     args = build_arg_parser().parse_args()
+    tf_module = require_tensorflow()
     dataset_config = load_dataset_config(args.config)
     train_config = load_train_config(args.train_config)
     class_names = get_class_names(dataset_config)
+    detection_class_names = get_detection_class_names(dataset_config)
 
     processed_root = (
         args.processed_root
@@ -245,13 +243,13 @@ def main() -> int:
     callbacks = [
         tf_module.keras.callbacks.ModelCheckpoint(
             filepath=str(best_model_path),
-            monitor="val_class_probs_accuracy",
-            mode="max",
+            monitor="val_loss",
+            mode="min",
             save_best_only=True,
         ),
         tf_module.keras.callbacks.EarlyStopping(
-            monitor="val_class_probs_accuracy",
-            mode="max",
+            monitor="val_loss",
+            mode="min",
             patience=int(train_config["early_stopping_patience"]),
             restore_best_weights=False,
         ),
@@ -273,68 +271,64 @@ def main() -> int:
     )
 
     model.save(final_model_path)
-    best_model = tf_module.keras.models.load_model(best_model_path)
+    best_model = tf_module.keras.models.load_model(best_model_path, custom_objects=get_custom_objects())
 
-    train_result = evaluate_split(best_model, train_eval_dataset, train_samples, "train", class_names)
-    val_result = evaluate_split(best_model, val_dataset, val_samples, "val", class_names)
-    test_result = evaluate_split(best_model, test_dataset, test_samples, "test", class_names)
+    train_result = evaluate_split(best_model, train_eval_dataset, train_samples, "train", dataset_config)
+    val_result = evaluate_split(best_model, val_dataset, val_samples, "val", dataset_config)
+    test_result = evaluate_split(best_model, test_dataset, test_samples, "test", dataset_config)
 
     save_json(output_dir / "class_names.json", class_names)
+    save_json(output_dir / "detection_class_names.json", detection_class_names)
 
-    confusion = test_result["confusion_matrix"]
-    report_text = format_classification_report(class_names, confusion)
-    matrix_text = format_confusion_matrix(class_names, confusion)
-    suggestions = build_collection_suggestions(class_names, confusion)
+    detection_report_text = format_detection_report(detection_class_names, test_result["detection_metrics"])
+    suggestions = build_collection_suggestions(detection_class_names, test_result["detection_metrics"])
 
-    (report_dir / "classification_report.txt").write_text(report_text + "\n", encoding="utf-8")
-    (report_dir / "confusion_matrix.txt").write_text(matrix_text + "\n", encoding="utf-8")
+    (report_dir / "detection_report.txt").write_text(detection_report_text + "\n", encoding="utf-8")
     (report_dir / "collection_suggestions.txt").write_text("\n".join(suggestions) + ("\n" if suggestions else ""), encoding="utf-8")
-    save_confusion_csv(confusion, class_names, report_dir / "confusion_matrix.csv")
-    localization_report_lines = [
-        f"train_localization_error_px: {train_result['mean_localization_error_px']}",
-        f"val_localization_error_px: {val_result['mean_localization_error_px']}",
-        f"test_localization_error_px: {test_result['mean_localization_error_px']}",
-        f"train_heatmap_mae: {train_result['heatmap_mae']:.6f}",
-        f"val_heatmap_mae: {val_result['heatmap_mae']:.6f}",
-        f"test_heatmap_mae: {test_result['heatmap_mae']:.6f}",
-    ]
-    (report_dir / "localization_report.txt").write_text("\n".join(localization_report_lines) + "\n", encoding="utf-8")
 
     summary_payload = {
         "history": history.history,
-        "train_class_accuracy": train_result["class_accuracy"],
-        "val_class_accuracy": val_result["class_accuracy"],
-        "test_class_accuracy": test_result["class_accuracy"],
         "train_loss": train_result["loss"],
         "val_loss": val_result["loss"],
         "test_loss": test_result["loss"],
-        "train_heatmap_mae": train_result["heatmap_mae"],
-        "val_heatmap_mae": val_result["heatmap_mae"],
-        "test_heatmap_mae": test_result["heatmap_mae"],
-        "train_localization_error_px": train_result["mean_localization_error_px"],
-        "val_localization_error_px": val_result["mean_localization_error_px"],
-        "test_localization_error_px": test_result["mean_localization_error_px"],
-        "test_metrics": test_result["metrics"],
+        "train_objectness_accuracy": train_result["objectness_accuracy"],
+        "val_objectness_accuracy": val_result["objectness_accuracy"],
+        "test_objectness_accuracy": test_result["objectness_accuracy"],
+        "train_bbox_mae": train_result["bbox_mae"],
+        "val_bbox_mae": val_result["bbox_mae"],
+        "test_bbox_mae": test_result["bbox_mae"],
+        "train_class_accuracy": train_result["class_accuracy"],
+        "val_class_accuracy": val_result["class_accuracy"],
+        "test_class_accuracy": test_result["class_accuracy"],
+        "train_detection_metrics": train_result["detection_metrics"],
+        "val_detection_metrics": val_result["detection_metrics"],
+        "test_detection_metrics": test_result["detection_metrics"],
+        "train_assignment_collisions": train_result["assignment_collisions"],
+        "val_assignment_collisions": val_result["assignment_collisions"],
+        "test_assignment_collisions": test_result["assignment_collisions"],
         "collection_suggestions": suggestions,
         "class_names": class_names,
+        "detection_class_names": detection_class_names,
         "best_model_path": str(best_model_path),
         "final_model_path": str(final_model_path),
     }
     save_json(report_dir / "training_summary.json", make_json_safe(summary_payload))
 
-    print(f"train class accuracy: {train_result['class_accuracy']:.4f}")
-    print(f"val class accuracy:   {val_result['class_accuracy']:.4f}")
-    print(f"test class accuracy:  {test_result['class_accuracy']:.4f}")
-    print(f"test heatmap mae:     {test_result['heatmap_mae']:.4f}")
-    if test_result["mean_localization_error_px"] is not None:
-        print(f"test localization error px: {test_result['mean_localization_error_px']:.2f}")
+    print(f"train loss:                  {train_result['loss']:.4f}")
+    print(f"val loss:                    {val_result['loss']:.4f}")
+    print(f"test loss:                   {test_result['loss']:.4f}")
+    print(f"test objectness accuracy:    {test_result['objectness_accuracy']:.4f}")
+    print(f"test bbox mae:               {test_result['bbox_mae']:.4f}")
+    print(f"test class accuracy:         {test_result['class_accuracy']:.4f}")
+    print(f"test micro precision@IoU:    {test_result['detection_metrics']['micro_precision']:.4f}")
+    print(f"test micro recall@IoU:       {test_result['detection_metrics']['micro_recall']:.4f}")
+    print(f"test micro f1@IoU:           {test_result['detection_metrics']['micro_f1_score']:.4f}")
+    print(f"test mean IoU:               {test_result['detection_metrics']['mean_iou']:.4f}")
+    if test_result["detection_metrics"]["mean_center_error_px"] is not None:
+        print(f"test mean center error px:   {test_result['detection_metrics']['mean_center_error_px']:.2f}")
     print("")
-    print(matrix_text)
-    print("")
-    print(report_text)
-    if test_result["mean_localization_error_px"] is not None:
-        print("")
-        print(f"heatmap peak localization error px: {test_result['mean_localization_error_px']:.2f}")
+    print("detection report:")
+    print(detection_report_text)
     if suggestions:
         print("")
         print("data collection suggestions:")

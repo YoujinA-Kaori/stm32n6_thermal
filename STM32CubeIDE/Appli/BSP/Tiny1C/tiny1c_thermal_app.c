@@ -50,6 +50,8 @@
 #define CFG_TINY1C_AUTO_SHUTTER_THRESH_CNT 72U
 #define CFG_TINY1C_DEFAULT_PSEUDO_COLOR_MODE PSEUDO_COLOR_MODE_5
 #define CFG_TINY1C_PREVIEW_CONTRAST_DEFAULT_SLIDER 54U
+#define CFG_TINY1C_PREVIEW_MIRROR_DEFAULT_ENABLE  1U
+#define CFG_TINY1C_PREVIEW_FLIP_DEFAULT_ENABLE    1U
 
 static volatile uint8_t g_tiny1c_frame_ready = 0U;
 static uint8_t g_tiny1c_raw_frame[CFG_TINY1C_FRAME_BYTES]
@@ -63,8 +65,8 @@ static uint16_t g_tiny1c_disp_y0 = 0U;
 static volatile uint32_t g_tiny1c_frame_counter = 0U;
 static volatile uint8_t g_tiny1c_center_temp_centi_c_valid = 0U;
 static volatile int32_t g_tiny1c_center_temp_centi_c = 0;
-static volatile uint8_t g_tiny1c_preview_mirror_enable = 0U;
-static volatile uint8_t g_tiny1c_preview_flip_enable = 0U;
+static volatile uint8_t g_tiny1c_preview_mirror_enable = CFG_TINY1C_PREVIEW_MIRROR_DEFAULT_ENABLE;
+static volatile uint8_t g_tiny1c_preview_flip_enable = CFG_TINY1C_PREVIEW_FLIP_DEFAULT_ENABLE;
 static volatile uint8_t g_tiny1c_preview_contrast_slider = CFG_TINY1C_PREVIEW_CONTRAST_DEFAULT_SLIDER;
 
 /**
@@ -989,4 +991,51 @@ uint8_t tiny1c_thermal_app_get_preview_mirror_enabled(void)
 uint8_t tiny1c_thermal_app_get_preview_flip_enabled(void)
 {
     return g_tiny1c_preview_flip_enable;
+}
+
+/**
+ * @brief Map one raw temp14 frame coordinate into the current preview-oriented frame coordinate.
+ * @param source_x Source-frame X coordinate in range 0..159.
+ * @param source_y Source-frame Y coordinate in range 0..119.
+ * @param dest_x Pointer to the transformed X coordinate, may be NULL.
+ * @param dest_y Pointer to the transformed Y coordinate, may be NULL.
+ * @return None
+ */
+void tiny1c_thermal_app_transform_frame_point(uint16_t source_x,
+                                              uint16_t source_y,
+                                              uint16_t *dest_x,
+                                              uint16_t *dest_y)
+{
+    uint16_t transformed_x = source_x;
+    uint16_t transformed_y = source_y;
+
+    if (source_x >= CFG_TINY1C_FRAME_WIDTH)
+    {
+        transformed_x = (uint16_t)(CFG_TINY1C_FRAME_WIDTH - 1U);
+    }
+
+    if (source_y >= CFG_TINY1C_FRAME_HEIGHT)
+    {
+        transformed_y = (uint16_t)(CFG_TINY1C_FRAME_HEIGHT - 1U);
+    }
+
+    if (g_tiny1c_preview_mirror_enable != 0U)
+    {
+        transformed_x = (uint16_t)((CFG_TINY1C_FRAME_WIDTH - 1U) - transformed_x);
+    }
+
+    if (g_tiny1c_preview_flip_enable != 0U)
+    {
+        transformed_y = (uint16_t)((CFG_TINY1C_FRAME_HEIGHT - 1U) - transformed_y);
+    }
+
+    if (dest_x != NULL)
+    {
+        *dest_x = transformed_x;
+    }
+
+    if (dest_y != NULL)
+    {
+        *dest_y = transformed_y;
+    }
 }

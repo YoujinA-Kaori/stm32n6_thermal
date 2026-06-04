@@ -21,6 +21,8 @@
 extern lv_obj_t *g_contrast_value_label;
 
 #define CFG_THERMAL_GUI_PSEUDO_COUNT 11U
+#define CFG_THERMAL_GUI_PREVIEW_BASE_MIRROR_ENABLE 1U
+#define CFG_THERMAL_GUI_PREVIEW_BASE_FLIP_ENABLE   1U
 
 typedef struct
 {
@@ -59,6 +61,16 @@ static uint8_t g_current_center_temp_enable = 1U;
 static uint8_t g_current_hi_lo_mark_enable = 1U;
 static uint8_t g_config_saved = 0U;
 static uint8_t g_preview_fullscreen_active = 0U;
+
+/**
+ * @brief Apply the effective preview transform on top of the new default orientation.
+ * @return None.
+ */
+static void thermal_gui_apply_preview_transform(void)
+{
+    tiny1c_thermal_app_set_preview_transform((uint8_t)(CFG_THERMAL_GUI_PREVIEW_BASE_MIRROR_ENABLE ^ g_current_mirror_enable),
+                                             (uint8_t)(CFG_THERMAL_GUI_PREVIEW_BASE_FLIP_ENABLE ^ g_current_flip_enable));
+}
 
 /**
  * @brief Set a badge label text.
@@ -433,7 +445,7 @@ static void thermal_gui_reset_state_to_default(lv_ui *ui)
     (void)tiny1c_vdcmd_set_gain_mode(1U);
     (void)tiny1c_vdcmd_set_auto_shutter_enabled(1U);
     tiny1c_thermal_app_set_preview_contrast(g_current_contrast_slider);
-    tiny1c_thermal_app_set_preview_transform(0U, 0U);
+    thermal_gui_apply_preview_transform();
 
     lv_slider_set_value(ui->WidgetsDemo_slider_contrast, g_current_contrast_slider, LV_ANIM_OFF);
     thermal_gui_refresh_contrast_value(g_current_contrast_slider);
@@ -667,7 +679,7 @@ static void thermal_gui_mirror_event_cb(lv_event_t *e)
     if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED)
     {
         g_current_mirror_enable = (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) != 0U) ? 1U : 0U;
-        tiny1c_thermal_app_set_preview_transform(g_current_mirror_enable, g_current_flip_enable);
+        thermal_gui_apply_preview_transform();
         thermal_gui_refresh_device_info(&guider_ui);
     }
 }
@@ -682,7 +694,7 @@ static void thermal_gui_flip_event_cb(lv_event_t *e)
     if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED)
     {
         g_current_flip_enable = (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) != 0U) ? 1U : 0U;
-        tiny1c_thermal_app_set_preview_transform(g_current_mirror_enable, g_current_flip_enable);
+        thermal_gui_apply_preview_transform();
         thermal_gui_refresh_device_info(&guider_ui);
     }
 }
@@ -827,7 +839,7 @@ static void WidgetsDemo_event_handler(lv_event_t *e)
         lv_slider_set_value(ui->WidgetsDemo_slider_contrast, g_current_contrast_slider, LV_ANIM_OFF);
         tiny1c_thermal_app_set_preview_contrast(g_current_contrast_slider);
         thermal_gui_refresh_contrast_value(g_current_contrast_slider);
-        tiny1c_thermal_app_set_preview_transform(g_current_mirror_enable, g_current_flip_enable);
+        thermal_gui_apply_preview_transform();
         thermal_gui_set_badge_text(ui->WidgetsDemo_status_uart, g_config_saved ? "串口 在线 | 已记录" : "串口 在线");
     }
 }

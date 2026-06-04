@@ -121,9 +121,9 @@ class UsbSerialController(
 
     fun close() {
         stopRequested.set(true)
-        val thread = readerThread
-        if (thread != null && Thread.currentThread() !== thread) {
-            thread.join(500)
+        val rThread = readerThread
+        if (rThread != null && Thread.currentThread() !== rThread) {
+            rThread.join(500)
         }
         readerThread = null
 
@@ -139,6 +139,7 @@ class UsbSerialController(
         }
         currentConnection = null
         currentDriver = null
+        parser.reset()
 
         listener.onStatusChanged(context.getString(R.string.status_disconnected))
     }
@@ -202,14 +203,17 @@ class UsbSerialController(
 
     private fun startReader(port: UsbSerialPort) {
         stopRequested.set(false)
+        parser.reset()
+
         readerThread = Thread {
-            val readBuffer = ByteArray(4096)
+            val readBuffer = ByteArray(8192)
             while (!stopRequested.get()) {
                 try {
-                    val len = port.read(readBuffer, 250)
+                    val len = port.read(readBuffer, 100)
                     if (len > 0) {
-                        val data = readBuffer.copyOf(len)
-                        val frames = parser.feed(data)
+                        val copy = ByteArray(len)
+                        System.arraycopy(readBuffer, 0, copy, 0, len)
+                        val frames = parser.feed(copy)
                         for (frame in frames) {
                             listener.onFrameReceived(frame)
                         }
@@ -225,6 +229,7 @@ class UsbSerialController(
         }.apply {
             isDaemon = true
             name = "thermal-usb-reader"
+            priority = Thread.MAX_PRIORITY
             start()
         }
     }

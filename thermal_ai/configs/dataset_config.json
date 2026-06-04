@@ -1,5 +1,5 @@
 {
-  "project_name": "stm32n6_thermal_five_class",
+  "project_name": "stm32n6_thermal_detector",
   "input": {
     "width": 160,
     "height": 120,
@@ -16,7 +16,8 @@
     "person",
     "hand",
     "hot_object",
-    "circuit_board_hotspot"
+    "circuit_board_normal",
+    "circuit_board_abnormal_hotspot"
   ],
   "dataset_paths": {
     "raw_root": "thermal_ai_dataset/raw",
@@ -36,11 +37,19 @@
     "output_dtype": "float32"
   },
   "supervision": {
-    "mode": "classification_plus_heatmap",
+    "mode": "anchor_free_detection",
     "annotation_sidecar_suffix": ".json",
-    "heatmap_sigma_px": 7.0,
-    "empty_heatmap_policy": "zeros",
-    "require_non_empty_annotation": true
+    "require_non_empty_annotation": true,
+    "annotation_type": "bbox_xyxy"
+  },
+  "detector": {
+    "grid_width": 20,
+    "grid_height": 15,
+    "objectness_threshold": 0.35,
+    "class_threshold": 0.35,
+    "nms_iou_threshold": 0.3,
+    "eval_iou_threshold": 0.5,
+    "max_detections_per_image": 8
   },
   "artifacts": {
     "model_dir": "thermal_ai/artifacts/models",
