@@ -15,14 +15,12 @@
 目录主类别仍然保留：
 - `empty`
 - `person`
-- `hand`
 - `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
 其中真正参与检测头预测的是 4 个非空类：
 - `person`
-- `hand`
 - `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
@@ -66,7 +64,6 @@ thermal_ai_dataset/
   raw/
     empty/
     person/
-    hand/
     hot_object/
     circuit_board_normal/
     circuit_board_abnormal_hotspot/

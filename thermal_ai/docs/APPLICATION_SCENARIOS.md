@@ -3,7 +3,6 @@
 当前检测类别已经升级为：
 
 - `person`
-- `hand`
 - `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
@@ -48,18 +47,15 @@ and max_temp - ambient_temp > threshold:
     raise warning
 ```
 
-## 3. 人体 / 手部安全交互
+## 3. 人体安全交互
 
-`person` 和 `hand` 可以做：
+`person` 可以做：
 
 - 人体靠近提醒
-- 手部接近高温区提醒
-- 交互式手势前置检测
 
 建议再加：
 
 - `person + hot_object` 同屏时的安全提示
-- `hand` 接近高温目标时的危险提示
 
 ## 4. 自动截图留证
 

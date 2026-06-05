@@ -953,3 +953,45 @@ Likely next task in the next conversation:
   - calling runtime helpers
 - Keep GUI-facing rendering logic mainly in:
   - `STM32CubeIDE/Appli/gui_guider/custom/custom.c`
+
+## 2026-06-05 Thermal AI Detection Scope Update
+
+- The `hand` class has now been removed from the active thermal detector workflow.
+- Current active detector classes are:
+  - `person`
+  - `hot_object`
+  - `circuit_board_normal`
+  - `circuit_board_abnormal_hotspot`
+- `empty` is still retained as a non-box background / no-target class.
+
+### Dataset Directory State
+
+- `thermal_ai_dataset/raw/` has been normalized to keep only:
+  - `empty`
+  - `person`
+  - `hot_object`
+  - `circuit_board_normal`
+  - `circuit_board_abnormal_hotspot`
+- Legacy raw directories such as:
+  - `hand`
+  - `circuit_board_hotspot`
+  should no longer be used for new data collection.
+
+### Toolchain State
+
+- The bbox annotation tool now effectively uses 4 detection classes.
+- Numeric class mapping is now:
+  1. `person`
+  2. `hot_object`
+  3. `circuit_board_normal`
+  4. `circuit_board_abnormal_hotspot`
+- `thermal_ai/configs/dataset_config.json` is the current source of truth for class order.
+
+### Productization Direction
+
+- The main recommended product scenario is now:
+  - abnormal board hotspot detection
+  - temperature-delta threshold linkage
+  - consecutive-frame confirmation
+  - screenshot evidence capture
+- Hand detection is no longer part of the recommended default product path.

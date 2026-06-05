@@ -14,7 +14,6 @@
   "class_names": [
     "empty",
     "person",
-    "hand",
     "hot_object",
     "circuit_board_normal",
     "circuit_board_abnormal_hotspot"

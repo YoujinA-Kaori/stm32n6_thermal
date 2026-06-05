@@ -67,7 +67,6 @@ class AnnotationTool:
         self.drag_current_xy: tuple[int, int] | None = None
         self.class_colors = {
             "person": "#ff4d4f",
-            "hand": "#fa8c16",
             "hot_object": "#fadb14",
             "circuit_board_normal": "#52c41a",
             "circuit_board_abnormal_hotspot": "#36cfc9",
@@ -152,7 +151,7 @@ class AnnotationTool:
             "2. 鼠标右键：删除点击位置最近的框",
             "3. Enter / S：保存并下一张",
             "4. E：标记为空并保存",
-            "5. 数字 1-5：切换目标类别",
+            "5. 数字 1-4：切换目标类别",
             "6. Delete / Backspace：删除最后一个框",
             "7. C：清空当前样本所有框",
             "8. 左 / 右方向键：上一张 / 下一张",

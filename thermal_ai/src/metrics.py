@@ -212,8 +212,6 @@ def build_collection_suggestions(class_names: list[str], metrics: dict[str, Any]
         if recall < 0.65:
             if class_name == "person":
                 suggestions.append("person recall is low; add more full-body, side-view, and edge-of-frame person boxes.")
-            elif class_name == "hand":
-                suggestions.append("hand recall is low; add more small-hand, partial-hand, and near-edge hand boxes.")
             elif class_name == "hot_object":
                 suggestions.append("hot_object recall is low; add more isolated hot-object samples at different distances and sizes.")
             elif class_name == "circuit_board_normal":
@@ -224,8 +222,8 @@ def build_collection_suggestions(class_names: list[str], metrics: dict[str, Any]
                 suggestions.append(f"{class_name} recall is low; collect more session-diverse detection boxes for this class.")
 
         if precision < 0.65:
-            if class_name in {"person", "hand"}:
-                suggestions.append("person/hand precision is low; add more negative background scenes and mixed-scene boxes to reduce mutual false alarms.")
+            if class_name == "person":
+                suggestions.append("person precision is low; add more negative background scenes and mixed-scene samples to reduce false alarms.")
             elif class_name in {"hot_object", "circuit_board_abnormal_hotspot"}:
                 suggestions.append("hot_object/abnormal-board precision is low; add clearer class boundaries and tighter boxes for local hot regions.")
             elif class_name == "circuit_board_normal":

@@ -47,7 +47,7 @@ C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\p
 | --- | --- |
 | 鼠标左键拖拽 | 画一个框 |
 | 鼠标右键 | 删除最近的框 |
-| `1-5` | 切换类别 |
+| `1-4` | 切换类别 |
 | `S` / `Enter` | 保存并下一张 |
 | `E` | 标记为空并保存 |
 | `Delete` / `Backspace` | 删除最后一个框 |
@@ -58,10 +58,9 @@ C:\Users\26218\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\p
 默认数字键映射：
 
 1. `person`
-2. `hand`
-3. `hot_object`
-4. `circuit_board_normal`
-5. `circuit_board_abnormal_hotspot`
+2. `hot_object`
+3. `circuit_board_normal`
+4. `circuit_board_abnormal_hotspot`
 
 ## 5. 保存结果
 
@@ -87,7 +86,7 @@ JSON 例子：
 ## 6. 目录规则
 
 - 放在 `empty` 目录下的样本，才能标记为 `empty`
-- 如果样本在 `person/hand/...` 目录下，标注框里至少要有一个对应主类
+- 如果样本在 `person/hot_object/...` 目录下，标注框里至少要有一个对应主类
 - 多目标样本只放在一个主类别目录里，不要复制到多个类目录
 
 ## 7. 方向说明

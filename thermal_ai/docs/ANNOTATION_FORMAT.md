@@ -91,7 +91,7 @@ thermal_ai_dataset/raw/person/session_a/frame_0001.json
 
 ## 6. 标注原则
 
-- `person / hand / hot_object / circuit_board_normal / circuit_board_abnormal_hotspot` 都用 bbox
+- `person / hot_object / circuit_board_normal / circuit_board_abnormal_hotspot` 都用 bbox
 - 一张图里有多个目标时，全部标出来
 - `empty` 不需要框
 - 框尽量贴合主体热区，不要过松
