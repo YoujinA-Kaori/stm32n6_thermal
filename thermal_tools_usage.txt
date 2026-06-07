@@ -50,18 +50,19 @@ temp_c = raw / 16.0 - 273.15
 
 五、实时读取串口
 
-当前串口是 COM3，波特率是 921600。
+当前串口是 COM3，波特率是 2000000。
+当前固件默认实时温度流约为 3 fps。
 
 命令：
 
-python tools\uart_temp14_parser.py --port COM3 --baud 921600 --save-pgm --save-bin
+python tools\uart_temp14_parser.py --port COM3 --baud 2000000 --save-pgm --save-bin
 
 说明：
 
 1. --port COM3
    指定串口号
 
-2. --baud 921600
+2. --baud 2000000
    指定波特率
 
 3. --save-pgm

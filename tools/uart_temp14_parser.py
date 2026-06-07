@@ -244,7 +244,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(description="STM32N6 thermal UART packet parser")
     parser.add_argument("--port", help="Serial port, for example COM5")
-    parser.add_argument("--baud", type=int, default=921600, help="Serial baud rate")
+    parser.add_argument("--baud", type=int, default=2000000, help="Serial baud rate")
     parser.add_argument("--hex-file", type=Path, help="Parse a text hex dump instead of live serial data")
     parser.add_argument("--out", type=Path, default=Path("thermal_out"), help="Output directory")
     parser.add_argument("--save-bin", action="store_true", help="Save raw payload as .bin")

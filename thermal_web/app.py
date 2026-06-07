@@ -40,7 +40,7 @@ from tools.uart_temp14_parser import PACKET_TYPE_TEMP14, PacketParser, ThermalPa
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 DOWNLOAD_DIR = APP_DIR / "downloads"
-DEFAULT_BAUD = 921600
+DEFAULT_BAUD = 2000000
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 AUTO_SERIAL_PORT = "auto"

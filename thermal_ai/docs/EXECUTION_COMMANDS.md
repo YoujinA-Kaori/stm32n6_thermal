@@ -8,8 +8,10 @@ D:\PracticeProject\Stm32\stm32n6_thermal
 
 ## 1. 采集原始数据
 
+当前固件默认串口温度流：`2000000` 波特率，约 `3 fps`。
+
 ```powershell
-python tools\uart_temp14_parser.py --port COM3 --baud 921600 --save-bin --save-pgm
+python tools\uart_temp14_parser.py --port COM3 --baud 2000000 --save-bin --save-pgm
 ```
 
 原始数据整理成：

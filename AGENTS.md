@@ -61,10 +61,18 @@
 UART 温度流线程仍保留，当前协议：
 
 - 串口：`USART1 + GPDMA1`
-- 波特率：`921600`
-- 帧率：`1 fps`
+- 波特率：`2000000`
+- 帧率：`3 fps`
 - 数据尺寸：`160x120`
 - 包类型：`TEMP14`
+
+说明：
+
+- 上述 `2000000 + 3 fps` 是**当前固件默认实时温度流配置**。
+- 该默认值当前已经和以下路径保持一致：
+  - `thermal_web/`
+  - `tools/uart_temp14_parser.py`
+- `thermal_android_app` 当前**没有**跟随本轮同步，Android 端默认波特率仍是 `921600`；后续如果继续使用手机端，不要默认认为它已自动跟上当前固件默认值。
 
 包头结构定义在：
 
@@ -543,12 +551,18 @@ Likely next task in the next conversation:
 - 新增 `thermal_web/` 作为独立 Web 上位机目录，基于 `FastAPI + WebSocket + Canvas`。
 - 入口：`python thermal_web/app.py`，浏览器打开 `http://127.0.0.1:8000`。
 - 默认自动选择第一个可用串口，也可以在网页里 `Refresh / Connect` 切换。
+- 当前 Web 端默认串口波特率已同步为：`2000000`
+- 当前 Web 端实时热像数据刷新率，受固件串口温度流节拍限制，默认约为：`3 fps`
 - 网页当前功能只保留和演示相关的最小闭环：
   - 热图实时显示
   - `Center / Max / Min`
   - 伪彩模式切换
   - 温标范围滑条
   - 截图
+- Web 端图库相关能力当前仍保留：
+  - `同步图库`
+  - `下载最新`
+  - `下载选中`
 - Web 端直接复用 `tools/uart_temp14_parser.py` 的串口帧格式，解析的是原始 `temp14` payload。
 - 图片横幅已移动到 `thermal_web/static/assets/thermal_ai_banner.png`，并放在左侧栏顶部作为品牌图。
 - 同一个串口不能被别的程序占用；网页会自己打开/关闭串口，不需要再单独开串口监视器。

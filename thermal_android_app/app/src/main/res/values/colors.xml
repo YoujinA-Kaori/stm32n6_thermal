@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="thermal_bg">#0B1015</color>
-    <color name="thermal_panel">#16202A</color>
-    <color name="thermal_panel_border">#2D3C4A</color>
-    <color name="thermal_text">#E9F0F6</color>
-    <color name="thermal_text_muted">#93A6B5</color>
-    <color name="thermal_accent">#4CC8FF</color>
-</resources>
