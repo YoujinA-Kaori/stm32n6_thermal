@@ -456,7 +456,7 @@ static void thermal_gui_reset_state_to_default(lv_ui *ui)
     thermal_gui_apply_preview_overlay_state(ui);
     thermal_gui_refresh_device_info(ui);
     thermal_gui_set_badge_text(ui->WidgetsDemo_status_uart, "串口 在线");
-    thermal_gui_set_badge_text(ui->WidgetsDemo_status_power, "电源 78%");
+    thermal_gui_set_badge_text(ui->WidgetsDemo_status_power, "BAT --%");
 }
 
 /**

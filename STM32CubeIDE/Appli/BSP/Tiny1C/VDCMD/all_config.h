@@ -1,7 +1,7 @@
 #pragma once
 
 #define		FALCON_CMD
-#define I2C_TRANSFER_WAIT_TIME_MS  20000
+#define I2C_TRANSFER_WAIT_TIME_MS  2000
 
 /*
  * VDCMD portable configuration:

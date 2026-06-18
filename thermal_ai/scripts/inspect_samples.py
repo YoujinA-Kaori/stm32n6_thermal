@@ -14,6 +14,7 @@ import _bootstrap
 _bootstrap.setup_python_path()
 
 from src.common import (
+    describe_frame_normalization,
     ensure_dir,
     get_class_names,
     load_dataset_config,
@@ -25,7 +26,7 @@ from src.common import (
 
 
 def save_preview_png(frame_u16: np.ndarray, config: dict, output_path: Path) -> None:
-    """Save a single grayscale preview PNG using the fixed normalization."""
+    """Save a single grayscale preview PNG using the current model normalization."""
     try:
         from PIL import Image
     except ImportError as exc:
@@ -41,16 +42,25 @@ def save_preview_png(frame_u16: np.ndarray, config: dict, output_path: Path) -> 
     image.save(output_path)
 
 
-def print_frame_stats(bin_path: Path, frame_u16: np.ndarray) -> None:
+def print_frame_stats(bin_path: Path, frame_u16: np.ndarray, config: dict) -> None:
     """Print numeric stats for one temp14 sample."""
     temp_c = frame_u16.astype(np.float32) / 16.0 - 273.15
     center_temp_c = float(temp_c[temp_c.shape[0] // 2, temp_c.shape[1] // 2])
-    print(
+    normalization = describe_frame_normalization(frame_u16, config)
+    line = (
         f"{bin_path} shape={frame_u16.shape[1]}x{frame_u16.shape[0]} "
         f"min_c={float(np.min(temp_c)):.2f} max_c={float(np.max(temp_c)):.2f} "
         f"mean_c={float(np.mean(temp_c)):.2f} std_c={float(np.std(temp_c)):.2f} "
-        f"center_c={center_temp_c:.2f}"
+        f"center_c={center_temp_c:.2f} norm_mode={normalization['mode']}"
     )
+    if normalization["mode"] == "delta_from_frame_percentile_clip":
+        line += (
+            f" bg_p={float(normalization['background_percentile']):.1f} "
+            f"bg_c={float(normalization['background_temp_c']):.2f} "
+            f"delta_min_c={float(normalization['delta_min_c']):.2f} "
+            f"delta_max_c={float(normalization['delta_max_c']):.2f}"
+        )
+    print(line)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -74,7 +84,7 @@ def main() -> int:
 
     if args.input is not None:
         frame_u16 = load_temp14_frame(args.input, config)
-        print_frame_stats(args.input, frame_u16)
+        print_frame_stats(args.input, frame_u16, config)
         if args.save_dir is not None:
             ensure_dir(args.save_dir)
             preview_path = args.save_dir / f"{args.input.stem}.png"
@@ -102,7 +112,7 @@ def main() -> int:
 
     for sample in selected:
         frame_u16 = load_temp14_frame(sample.bin_path, config)
-        print_frame_stats(sample.bin_path, frame_u16)
+        print_frame_stats(sample.bin_path, frame_u16, config)
         if args.save_dir is not None:
             preview_name = f"{sample.class_name}_{sample.bin_path.stem}.png"
             save_preview_png(frame_u16, config, args.save_dir / preview_name)

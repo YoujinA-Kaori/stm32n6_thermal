@@ -497,6 +497,40 @@ UART 温度流线程仍保留，当前协议：
   - 仅靠 `.project` 工程级登记后，`Debug/Release` 在 CubeIDE 刷新后是否都会自动纳入 `lv_font_thermal_cn_18.c`
 - 如果后续切换分辨率版本，不要复用当前 `160x120` 常量，必须整体复核组合帧尺寸和 UART 协议
 
+## 2026-06-07 BQ27441 Battery Gauge Notes
+
+- 当前工程已接入：
+  - `STM32CubeIDE/Appli/BSP/BQ27441/bq27441g1a.c`
+  - `STM32CubeIDE/Appli/BSP/BQ27441/bq27441g1a.h`
+- `BQ27441` 与 `Tiny1C` 控制通道共用 **硬件 `I2C4`**，不是独立总线。
+- 当前采取的稳定化方案不是“GUI 里直接读电池”，而是：
+  - `Appli/Core/Src/i2c.c`
+  - 新增共享 `I2C4` bus mutex
+  - `Tiny1C` VDCMD 路径和 `BQ27441` 轮询路径都走这把总线锁
+- 当前 `Tiny1C` 相关互斥关系变成两层：
+  - `tiny1c_vdcmd_app.c` 内部的 `VDCMD mutex`
+  - `i2c.c` 内部的共享 `I2C4 bus mutex`
+- `BQ27441` 当前不是在 GUI 线程里同步读，也不是高频任务：
+  - `Appli/Core/Src/app_threadx.c`
+  - 新增低优先级 `battery_thread`
+  - 默认轮询周期：`1000 ms`
+- 当前电池线程只读取最小闭环所需信息：
+  - 剩余电量百分比 `SOC`
+  - 充电 / 放电 / 空闲状态
+- 当前 GUI 集成方式：
+  - 右上角 `status_power` badge
+  - GUI 只读缓存，不直接访问 `BQ27441`
+  - 文案当前为 ASCII：
+    - `CHG xx%`
+    - `DSG xx%`
+    - `BAT xx%`
+    - 无效时 `BAT --%`
+- 如果后续这块出问题，优先检查：
+  1. `BQ27441` 是否真的仍挂在 `I2C4`
+  2. `app_i2c4_bus_lock()` / `app_i2c4_bus_unlock()` 是否被破坏
+  3. 是否有人又在 GUI 或别的高优先级路径里直接访问了 `BQ27441`
+  4. `tiny1c_vdcmd_app.c` 是否还保留了共享总线锁接入
+
 ## 2026-05-16 Hardware Expansion Notes
 
 Conversation summary for the next session:

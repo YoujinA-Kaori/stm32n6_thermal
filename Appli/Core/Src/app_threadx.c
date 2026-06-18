@@ -37,8 +37,10 @@
 #include "events_init.h"
 #include "custom.h"
 #include "app_filex.h"
+#include "i2c.h"
 #include "libirtemp.h"
 #include "thermal_ai_runtime.h"
+#include "BQ27441/bq27441g1a.h"
 #include "Tiny1C/tiny1c_thermal_app.h"
 #include "usart.h"
 #include "RGBLCD/rgblcd.h"
@@ -103,6 +105,11 @@ typedef struct __attribute__((packed))
 #define CFG_EXTREMA_QUERY_THREAD_PRIORITY     18U
 #define CFG_EXTREMA_QUERY_PERIOD_MS           80U
 #define CFG_EXTREMA_QUERY_PERIOD_TICKS        (((CFG_EXTREMA_QUERY_PERIOD_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
+#define CFG_BATTERY_THREAD_STACK_SIZE         2048U
+#define CFG_BATTERY_THREAD_PRIORITY           19U
+#define CFG_BATTERY_POLL_PERIOD_MS            1000U
+#define CFG_BATTERY_POLL_PERIOD_TICKS         (((CFG_BATTERY_POLL_PERIOD_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
+#define CFG_BATTERY_I2C_TIMEOUT_MS            100U
 
 /* USER CODE END PD */
 
@@ -118,11 +125,13 @@ static TX_THREAD g_gui_thread;
 static TX_THREAD g_uart_stream_thread;
 static TX_THREAD g_uart_command_thread;
 static TX_THREAD g_extrema_query_thread;
+static TX_THREAD g_battery_thread;
 static ULONG g_thermal_thread_stack[CFG_THERMAL_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_gui_thread_stack[CFG_GUI_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_uart_stream_thread_stack[CFG_UART_STREAM_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_uart_command_thread_stack[CFG_UART_COMMAND_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_extrema_query_thread_stack[CFG_EXTREMA_QUERY_THREAD_STACK_SIZE / sizeof(ULONG)];
+static ULONG g_battery_thread_stack[CFG_BATTERY_THREAD_STACK_SIZE / sizeof(ULONG)];
 static volatile float g_libirtemp_probe_sink_c = 0.0f;
 static volatile uint8_t g_uart_stream_tx_busy = 0U;
 static volatile uint32_t g_uart_file_hold_mask = 0U;
@@ -135,6 +144,10 @@ static volatile uint16_t g_extrema_cache_min_temp_x = 0U;
 static volatile uint16_t g_extrema_cache_min_temp_y = 0U;
 static volatile uint16_t g_extrema_cache_max_temp_x = 0U;
 static volatile uint16_t g_extrema_cache_max_temp_y = 0U;
+static volatile uint8_t g_battery_cache_valid = 0U;
+static volatile uint8_t g_battery_cache_percent = 0U;
+static volatile uint8_t g_battery_cache_charge_state = (uint8_t)BQ27441_CHARGE_STATUS_SLEEP;
+static BQ27441_Device_t g_battery_device;
 static uint8_t g_uart_stream_tx_buffer[sizeof(app_threadx_uart_stream_header_t) + CFG_UART_STREAM_PAYLOAD_BYTES]
   __attribute__((aligned(32)));
 static uint8_t g_uart_command_rx_line[CFG_UART_COMMAND_LINE_MAX];
@@ -157,6 +170,7 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input);
 static VOID app_threadx_uart_stream_thread_entry(ULONG thread_input);
 static VOID app_threadx_uart_command_thread_entry(ULONG thread_input);
 static VOID app_threadx_extrema_query_thread_entry(ULONG thread_input);
+static VOID app_threadx_battery_thread_entry(ULONG thread_input);
 static void app_threadx_uart_process_command_line(const uint8_t *command_line_ptr);
 static UINT app_threadx_uart_send_text(const char *text_ptr);
 static UINT app_threadx_uart_send_text_fmt(const char *format_ptr, ...);
@@ -185,6 +199,7 @@ static uint16_t app_threadx_rgb565_average4(uint16_t c00,
 static void app_threadx_gui_set_badge_text(lv_obj_t *badge, const char *text);
 static void app_threadx_gui_update_preview(lv_ui *ui);
 static void app_threadx_gui_update_fullscreen_image(void);
+static void app_threadx_gui_format_battery_text(char *buffer, uint32_t buffer_size);
 static void app_threadx_gui_update_preview_layer(lv_obj_t *preview_img,
                                                  lv_obj_t *preview_center_temp,
                                                  lv_obj_t *preview_max_temp,
@@ -226,6 +241,12 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
 
   /* USER CODE END App_ThreadX_MEM_POOL */
   /* USER CODE BEGIN App_ThreadX_Init */
+  ret = app_i2c4_bus_mutex_init();
+  if (ret != TX_SUCCESS)
+  {
+    return ret;
+  }
+
   ret = tx_thread_create(&g_thermal_thread,
                          "thermal_thread",
                          app_threadx_thermal_thread_entry,
@@ -294,6 +315,21 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
                          sizeof(g_extrema_query_thread_stack),
                          CFG_EXTREMA_QUERY_THREAD_PRIORITY,
                          CFG_EXTREMA_QUERY_THREAD_PRIORITY,
+                         TX_NO_TIME_SLICE,
+                         TX_AUTO_START);
+  if (ret != TX_SUCCESS)
+  {
+    return ret;
+  }
+
+  ret = tx_thread_create(&g_battery_thread,
+                         "battery_thread",
+                         app_threadx_battery_thread_entry,
+                         0U,
+                         g_battery_thread_stack,
+                         sizeof(g_battery_thread_stack),
+                         CFG_BATTERY_THREAD_PRIORITY,
+                         CFG_BATTERY_THREAD_PRIORITY,
                          TX_NO_TIME_SLICE,
                          TX_AUTO_START);
   /* USER CODE END App_ThreadX_Init */
@@ -582,6 +618,52 @@ static void app_threadx_gui_format_temp_text(char *buffer, uint32_t buffer_size,
                  temp_int,
                  temp_frac,
                  unit_char);
+}
+
+/**
+  * @brief  Format the battery badge text from the latest cached battery state.
+  * @param  buffer Output buffer.
+  * @param  buffer_size Output buffer size.
+  * @retval None
+  */
+static void app_threadx_gui_format_battery_text(char *buffer, uint32_t buffer_size)
+{
+  uint8_t battery_percent;
+  uint8_t battery_valid;
+  uint8_t battery_charge_state;
+  const char *state_prefix;
+
+  if ((buffer == NULL) || (buffer_size == 0U))
+  {
+    return;
+  }
+
+  battery_valid = g_battery_cache_valid;
+  battery_percent = g_battery_cache_percent;
+  battery_charge_state = g_battery_cache_charge_state;
+  if (battery_valid == 0U)
+  {
+    (void)snprintf(buffer, buffer_size, "BAT --%%");
+    return;
+  }
+
+  switch ((BQ27441_ChargeStatusTypeDef)battery_charge_state)
+  {
+    case BQ27441_CHARGE_STATUS_CHARGING:
+      state_prefix = "CHG";
+      break;
+
+    case BQ27441_CHARGE_STATUS_DISCHARGING:
+      state_prefix = "DSG";
+      break;
+
+    case BQ27441_CHARGE_STATUS_SLEEP:
+    default:
+      state_prefix = "BAT";
+      break;
+  }
+
+  (void)snprintf(buffer, buffer_size, "%s %u%%", state_prefix, (unsigned)battery_percent);
 }
 
 /**
@@ -988,6 +1070,60 @@ static VOID app_threadx_extrema_query_thread_entry(ULONG thread_input)
 }
 
 /**
+  * @brief  Low-priority battery polling thread entry.
+  * @param  thread_input Unused thread input parameter.
+  * @retval None
+  */
+static VOID app_threadx_battery_thread_entry(ULONG thread_input)
+{
+  uint8_t battery_initialized = 0U;
+
+  TX_PARAMETER_NOT_USED(thread_input);
+
+  (void)memset(&g_battery_device, 0, sizeof(g_battery_device));
+
+  for (;;)
+  {
+    HAL_StatusTypeDef hal_status = HAL_ERROR;
+
+    if (app_i2c4_bus_lock() == TX_SUCCESS)
+    {
+      if (battery_initialized == 0U)
+      {
+        hal_status = BQ27441_Init(&g_battery_device,
+                                  &hi2c4,
+                                  BQ27441_DEFAULT_ADDR,
+                                  CFG_BATTERY_I2C_TIMEOUT_MS);
+        if (hal_status == HAL_OK)
+        {
+          battery_initialized = 1U;
+          hal_status = BQ27441_Update(&g_battery_device);
+        }
+      }
+      else
+      {
+        hal_status = BQ27441_Update(&g_battery_device);
+      }
+
+      app_i2c4_bus_unlock();
+    }
+
+    if (hal_status == HAL_OK)
+    {
+      g_battery_cache_percent = g_battery_device.soc;
+      g_battery_cache_charge_state = (uint8_t)g_battery_device.charge_status;
+      g_battery_cache_valid = 1U;
+    }
+    else if (battery_initialized == 0U)
+    {
+      g_battery_cache_valid = 0U;
+    }
+
+    tx_thread_sleep((CFG_BATTERY_POLL_PERIOD_TICKS > 0U) ? CFG_BATTERY_POLL_PERIOD_TICKS : 1U);
+  }
+}
+
+/**
   * @brief  GUI rendering thread entry.
   * @param  thread_input Unused thread input parameter.
   * @retval None
@@ -1033,6 +1169,7 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
   {
     uint32_t frame_counter_now;
     char time_text[16];
+    char battery_text[16];
     uint32_t seconds;
 
     frame_counter_now = tiny1c_thermal_app_get_frame_counter();
@@ -1045,12 +1182,12 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
         app_threadx_gui_update_fullscreen_image();
         lv_obj_invalidate(guider_ui.WidgetsDemo_fullscreen_preview_img);
       }
+    }
 
-      if ((HAL_GetTick() - overlay_update_tick_last) >= CFG_GUI_OVERLAY_UPDATE_PERIOD_MS)
-      {
-        app_threadx_gui_update_preview(&guider_ui);
-        overlay_update_tick_last = HAL_GetTick();
-      }
+    if ((HAL_GetTick() - overlay_update_tick_last) >= CFG_GUI_OVERLAY_UPDATE_PERIOD_MS)
+    {
+      app_threadx_gui_update_preview(&guider_ui);
+      overlay_update_tick_last = HAL_GetTick();
     }
 
     seconds = HAL_GetTick() / 1000U;
@@ -1058,6 +1195,8 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
                    (unsigned long)((seconds / 60U) % 60U),
                    (unsigned long)(seconds % 60U));
     app_threadx_gui_set_badge_text(guider_ui.WidgetsDemo_status_time, time_text);
+    app_threadx_gui_format_battery_text(battery_text, sizeof(battery_text));
+    app_threadx_gui_set_badge_text(guider_ui.WidgetsDemo_status_power, battery_text);
 
     lv_timer_handler();
     tx_thread_sleep(5U);

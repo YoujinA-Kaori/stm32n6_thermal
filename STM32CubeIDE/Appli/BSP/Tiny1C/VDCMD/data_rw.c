@@ -19,6 +19,7 @@ ir_error_t i2c_data_read(uint16_t byI2CSlaveID, uint16_t wI2CRegAddr, uint16_t w
     if (rst != HAL_OK)
     {
         printf("I2C read command filed (error_code:%d)\n", rst);
+        app_i2c4_bus_recover_locked();
         return IR_I2C_GET_REGISTER_FAIL;
     }
     else 
@@ -36,7 +37,10 @@ static ir_error_t i2c_check_access_done(void)
     uint16_t wWaitTime = I2C_TRANSFER_WAIT_TIME_MS;
     do
     {
-        i2c_data_read(I2C_SLAVE_ID, I2C_VD_BUFFER_STATUS, 1, &status);
+        if (i2c_data_read(I2C_SLAVE_ID, I2C_VD_BUFFER_STATUS, 1, &status) != IR_SUCCESS)
+        {
+            return IR_I2C_GET_REGISTER_FAIL;
+        }
         error_type=(status & VCMD_ERR_STS_BIT);
         switch(error_type)
         {
@@ -84,6 +88,7 @@ ir_error_t i2c_data_write(uint16_t byI2CSlaveID, uint16_t wI2CRegAddr, uint16_t 
     if (rst != HAL_OK)
     {
         printf("I2C write command filed (error_code:%d)\n", rst);
+        app_i2c4_bus_recover_locked();
         return IR_I2C_SET_REGISTER_FAIL;
     }
         //when wI2CRegAddr bit[15] = 1,only transfer data to vdcmd bufff,no need to call check_access_done

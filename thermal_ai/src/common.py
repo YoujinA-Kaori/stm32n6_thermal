@@ -279,6 +279,68 @@ def temp14_to_celsius(frame_u16: np.ndarray) -> np.ndarray:
     return frame_u16.astype(np.float32) / 16.0 - 273.15
 
 
+def _describe_temp_c_normalization(temp_c: np.ndarray, config: dict[str, Any]) -> dict[str, Any]:
+    """Summarize how one Celsius thermal frame will be normalized."""
+    norm_cfg = config["normalization"]
+    mode = str(norm_cfg.get("mode", "celsius_linear_clip"))
+
+    if mode == "celsius_linear_clip":
+        temp_c_min = float(norm_cfg["temp_c_min"])
+        temp_c_max = float(norm_cfg["temp_c_max"])
+        scale = temp_c_max - temp_c_min
+        if scale <= 0.0:
+            raise ValueError("normalization.temp_c_max must be greater than normalization.temp_c_min")
+        normalized = np.clip((temp_c - temp_c_min) / scale, 0.0, 1.0)
+        return {
+            "mode": mode,
+            "source_min_c": float(np.min(temp_c)),
+            "source_max_c": float(np.max(temp_c)),
+            "source_mean_c": float(np.mean(temp_c)),
+            "source_std_c": float(np.std(temp_c)),
+            "normalization_min_c": temp_c_min,
+            "normalization_max_c": temp_c_max,
+            "normalized_min": float(np.min(normalized)),
+            "normalized_max": float(np.max(normalized)),
+        }
+
+    if mode == "delta_from_frame_percentile_clip":
+        background_percentile = float(norm_cfg.get("background_percentile", 50.0))
+        delta_c_min = float(norm_cfg["delta_c_min"])
+        delta_c_max = float(norm_cfg["delta_c_max"])
+        scale = delta_c_max - delta_c_min
+        if scale <= 0.0:
+            raise ValueError("normalization.delta_c_max must be greater than normalization.delta_c_min")
+
+        background_temp_c = float(np.percentile(temp_c, background_percentile))
+        delta_c = temp_c - background_temp_c
+        normalized = np.clip((delta_c - delta_c_min) / scale, 0.0, 1.0)
+        return {
+            "mode": mode,
+            "source_min_c": float(np.min(temp_c)),
+            "source_max_c": float(np.max(temp_c)),
+            "source_mean_c": float(np.mean(temp_c)),
+            "source_std_c": float(np.std(temp_c)),
+            "background_percentile": background_percentile,
+            "background_temp_c": background_temp_c,
+            "delta_min_c": float(np.min(delta_c)),
+            "delta_max_c": float(np.max(delta_c)),
+            "delta_mean_c": float(np.mean(delta_c)),
+            "delta_std_c": float(np.std(delta_c)),
+            "normalization_min_c": delta_c_min,
+            "normalization_max_c": delta_c_max,
+            "normalized_min": float(np.min(normalized)),
+            "normalized_max": float(np.max(normalized)),
+        }
+
+    raise ValueError(f"unsupported normalization mode: {mode}")
+
+
+def describe_frame_normalization(frame_u16: np.ndarray, config: dict[str, Any]) -> dict[str, Any]:
+    """Summarize how one raw frame will be normalized."""
+    temp_c = temp14_to_celsius(frame_u16)
+    return _describe_temp_c_normalization(temp_c, config)
+
+
 def load_temp14_frame(bin_path: Path, config: dict[str, Any]) -> np.ndarray:
     """Load one raw .bin frame as a 2D uint16 array."""
     height, width = get_frame_shape(config)
@@ -299,23 +361,40 @@ def normalize_temp14_frame(
     config: dict[str, Any],
     add_channel_axis: bool = True,
 ) -> np.ndarray:
-    """Convert raw temp14 pixels to the fixed normalized float32 input tensor."""
-    norm_cfg = config["normalization"]
+    """Convert raw temp14 pixels to the configured normalized float32 input tensor."""
     temp_c = temp14_to_celsius(frame_u16)
-    temp_c_min = float(norm_cfg["temp_c_min"])
-    temp_c_max = float(norm_cfg["temp_c_max"])
-    scale = temp_c_max - temp_c_min
-    if scale <= 0.0:
-        raise ValueError("normalization.temp_c_max must be greater than normalization.temp_c_min")
+    normalization_summary = _describe_temp_c_normalization(temp_c, config)
 
-    normalized = np.clip((temp_c - temp_c_min) / scale, 0.0, 1.0).astype(np.float32)
+    if normalization_summary["mode"] == "celsius_linear_clip":
+        normalized = np.clip(
+            (temp_c - float(normalization_summary["normalization_min_c"]))
+            / (
+                float(normalization_summary["normalization_max_c"])
+                - float(normalization_summary["normalization_min_c"])
+            ),
+            0.0,
+            1.0,
+        ).astype(np.float32)
+    else:
+        background_temp_c = float(normalization_summary["background_temp_c"])
+        delta_c = temp_c - background_temp_c
+        normalized = np.clip(
+            (delta_c - float(normalization_summary["normalization_min_c"]))
+            / (
+                float(normalization_summary["normalization_max_c"])
+                - float(normalization_summary["normalization_min_c"])
+            ),
+            0.0,
+            1.0,
+        ).astype(np.float32)
+
     if add_channel_axis:
         normalized = normalized[..., np.newaxis]
     return normalized
 
 
 def temp14_preview_u8(frame_u16: np.ndarray, config: dict[str, Any]) -> np.ndarray:
-    """Create an 8-bit grayscale preview using the same fixed normalization."""
+    """Create an 8-bit grayscale preview using the same model-side normalization."""
     normalized = normalize_temp14_frame(frame_u16, config, add_channel_axis=False)
     return np.clip(np.round(normalized * 255.0), 0, 255).astype(np.uint8)
 

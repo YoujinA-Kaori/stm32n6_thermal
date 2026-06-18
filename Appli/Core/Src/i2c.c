@@ -21,6 +21,11 @@
 #include "i2c.h"
 
 /* USER CODE BEGIN 0 */
+static TX_MUTEX g_app_i2c4_bus_mutex;
+static volatile uint8_t g_app_i2c4_bus_mutex_created = 0U;
+
+#define APP_I2C4_RECOVERY_PULSE_COUNT    9U
+#define APP_I2C4_RECOVERY_DELAY_MS       1U
 
 /* USER CODE END 0 */
 
@@ -136,6 +141,97 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 }
 
 /* USER CODE BEGIN 1 */
+/**
+  * @brief  Initialize the shared I2C4 bus mutex.
+  * @param  None
+  * @retval UINT `TX_SUCCESS` when the mutex is ready.
+  */
+UINT app_i2c4_bus_mutex_init(void)
+{
+  if (g_app_i2c4_bus_mutex_created == 0U)
+  {
+    if (tx_mutex_create(&g_app_i2c4_bus_mutex, "app_i2c4_bus_mutex", TX_INHERIT) != TX_SUCCESS)
+    {
+      return TX_MUTEX_ERROR;
+    }
+
+    g_app_i2c4_bus_mutex_created = 1U;
+  }
+
+  return TX_SUCCESS;
+}
+
+/**
+  * @brief  Acquire the shared I2C4 bus mutex and wait forever until it becomes available.
+  * @param  None
+  * @retval UINT `TX_SUCCESS` when the caller owns the bus.
+  */
+UINT app_i2c4_bus_lock(void)
+{
+  UINT status;
+
+  status = app_i2c4_bus_mutex_init();
+  if (status != TX_SUCCESS)
+  {
+    return status;
+  }
+
+  return tx_mutex_get(&g_app_i2c4_bus_mutex, TX_WAIT_FOREVER);
+}
+
+/**
+  * @brief  Release the shared I2C4 bus mutex when it is held.
+  * @param  None
+  * @retval None
+  */
+void app_i2c4_bus_unlock(void)
+{
+  if (g_app_i2c4_bus_mutex_created != 0U)
+  {
+    (void)tx_mutex_put(&g_app_i2c4_bus_mutex);
+  }
+}
+
+/**
+  * @brief  Recover the shared I2C4 bus while the caller already owns the bus mutex.
+  * @param  None
+  * @retval None
+  */
+void app_i2c4_bus_recover_locked(void)
+{
+  GPIO_InitTypeDef gpio_init = {0};
+  uint32_t pulse_index;
+
+  (void)HAL_I2C_DeInit(&hi2c4);
+
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+
+  gpio_init.Pin = GPIO_PIN_13 | GPIO_PIN_14;
+  gpio_init.Mode = GPIO_MODE_OUTPUT_OD;
+  gpio_init.Pull = GPIO_NOPULL;
+  gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &gpio_init);
+
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_13 | GPIO_PIN_14, GPIO_PIN_SET);
+  HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+
+  for (pulse_index = 0U; pulse_index < APP_I2C4_RECOVERY_PULSE_COUNT; ++pulse_index)
+  {
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_13, GPIO_PIN_RESET);
+    HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_13, GPIO_PIN_SET);
+    HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+  }
+
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+  HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+  HAL_Delay(APP_I2C4_RECOVERY_DELAY_MS);
+
+  MX_I2C4_Init();
+}
 
 /* USER CODE END 1 */
 

@@ -66,6 +66,11 @@
 			<location>D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/threadx/ports/cortex_m55/gnu/src</location>
 		</link>
 		<link>
+			<name>BSP/BQ27441/bq27441g1a.h</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/STM32CubeIDE/Appli/BSP/BQ27441/bq27441g1a.h</locationURI>
+		</link>
+		<link>
 			<name>Drivers/CMSIS/system_stm32n6xx_s.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/system_stm32n6xx_s.c</locationURI>
@@ -221,11 +226,6 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/app_threadx.c</locationURI>
 		</link>
 		<link>
-			<name>Application/User/Core/thermal_ai_runtime.c</name>
-			<type>1</type>
-			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/thermal_ai_runtime.c</locationURI>
-		</link>
-		<link>
 			<name>Application/User/Core/dcmipp.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/dcmipp.c</locationURI>
@@ -304,6 +304,11 @@
 			<name>Application/User/Core/stm32n6xx_it.c</name>
 			<type>1</type>
 			<locationURI>copy_PARENT/Appli/Core/Src/stm32n6xx_it.c</locationURI>
+		</link>
+		<link>
+			<name>Application/User/Core/thermal_ai_runtime.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Appli/Core/Src/thermal_ai_runtime.c</locationURI>
 		</link>
 		<link>
 			<name>Application/User/Core/tx_initialize_low_level.S</name>

@@ -1,50 +1,85 @@
 # STM32N6 热成像目标检测 AI
 
-这个目录用于给当前 `STM32N6 + Tiny1C` 热成像工程提供一套**轻量级目标检测**训练/导出/验证流程。
+这个目录用于给当前 `STM32N6 + Tiny1C` 热成像工程提供一套轻量化目标检测训练、导出、验证流程。
 
-当前方案特点：
-- 输入仍然只使用 `160x120 temp14`
-- 不使用伪彩图作为 AI 主输入
-- 不使用 YOLO
-- 模型是**轻量级 anchor-free grid detector**
-- 训练、量化、验证都围绕 **TensorFlow / Keras / TFLite**
-- 板端部署路线仍然是 **ST CubeAI**
+当前路线特点：
 
-## 1. 当前检测类别
+- 主输入始终是 `160x120` 的原始 `temp14`
+- 不用伪彩图、不用 RGB 图、不走 YOLO
+- 训练与部署围绕 `TensorFlow / Keras / TFLite / CubeAI`
+- 标注、训练、导出、验证都集中放在 `thermal_ai/`
+- 板端推理最终仍只走 `ST CubeAI`
 
-目录主类别仍然保留：
+## 当前检测类别
+
+目录主类别保留为：
+
 - `empty`
 - `person`
 - `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
-其中真正参与检测头预测的是 4 个非空类：
+其中真正进入检测头预测的是 4 个非空类：
+
 - `person`
 - `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
-`empty` 只表示“当前帧没有检测目标”。
+`empty` 只表示这一帧没有需要检测的目标。
 
-## 2. 关键方向约定
+## 归一化方案
 
-这次版本把“坐标系一致性”作为强约束处理：
+当前已经从“固定 0~150 摄氏度线性裁剪”切换为更适合热成像检测的方案：
 
-- 固件侧 LCD 默认预览当前就是 **mirror + flip**
-- UART 温度流现在也已经按**当前预览方向**打包输出
-- 所以后续采集的新 `.bin`、标注工具预览、训练框坐标、检测结果坐标，默认都和你在 LCD 上看到的方向一致
+1. 先把 `temp14` 转成摄氏度
+2. 计算当前帧背景参考温度
+3. 用“像素温度 - 背景温度”得到相对温差图
+4. 再把温差裁剪并映射到 `0~1`
 
-这样就不会再出现：
-- 串口温度流和屏幕画面互为反转
-- 目标框跟踪坐标方向对不上
+当前默认配置：
 
-另外，固件里新增了：
+- 背景参考：当前帧 `50% percentile`，也就是中位数
+- 温差裁剪范围：`[-8, 80]` 摄氏度
+
+公式：
+
+```text
+temp_c = raw_temp14 / 16.0 - 273.15
+background_c = percentile(temp_c, 50)
+delta_c = temp_c - background_c
+normalized = clip((delta_c - (-8.0)) / (80.0 - (-8.0)), 0.0, 1.0)
+```
+
+这样做的目的不是保留绝对温度，而是增强“目标相对背景”的热对比，降低环境整体升温或降温带来的影响。
+
+注意：
+
+- 这套归一化适合 AI 检测输入
+- 电路板异常告警不要只靠这张归一化图判断
+- 工程上仍建议结合原始 `temp14` 做绝对温差阈值和连续帧确认
+
+当前把 `delta_c_max` 提到 `80`，是为了让电路板短路/异常热点场景不那么容易在模型输入阶段过早饱和。
+
+## 坐标方向约定
+
+本轮已经统一了温度流、标注和检测坐标方向：
+
+- LCD 默认预览方向
+- UART 导出的 `temp14`
+- 标注工具预览
+- 训练后的检测框坐标
+
+现在默认都按同一方向理解，不再是互为翻转。
+
+固件里还补了：
+
 - `tiny1c_thermal_app_transform_frame_point()`
 
-后续如果 MCU 端做 CubeAI 检测框叠加，也可以直接复用这个坐标变换函数，让镜像/翻转开关和检测坐标同步。
+后面如果板端要把检测结果叠加到当前预览图上，可以直接复用这个坐标变换接口，让镜像和翻转开关与检测框同步。
 
-## 3. 目录结构
+## 目录结构
 
 ```text
 thermal_ai/
@@ -73,9 +108,9 @@ thermal_ai_dataset/
     test/
 ```
 
-## 4. 标注格式
+## 标注格式
 
-每个 `.bin` 对应一个同名 `.json`，现在是 **bbox 检测标注**，不是中心点：
+每个 `.bin` 对应一个同名 `.json`，当前是 `bbox xyxy` 格式：
 
 ```json
 {
@@ -99,7 +134,7 @@ thermal_ai_dataset/
 }
 ```
 
-空场景：
+空场景示例：
 
 ```json
 {
@@ -110,24 +145,27 @@ thermal_ai_dataset/
 ```
 
 详细说明见：
+
 - [ANNOTATION_FORMAT.md](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/docs/ANNOTATION_FORMAT.md)
 
-## 5. 训练模型
+## 当前模型形式
 
-当前检测模型是：
+当前不是 YOLO，而是轻量化 `anchor-free grid detector`：
+
 - 输入：`120x160x1`
-- Backbone：3 层 `Conv + MaxPool`
-- 输出：`15x20` 检测网格
+- Backbone：几层 `Conv + MaxPool`
+- 输出：`15x20` 网格
 - 每个网格预测：
   - `objectness`
   - `bbox(cx_offset, cy_offset, w, h)`
   - `class logits`
 
-这比 YOLO 轻很多，也比之前“分类 + 热图”更直接适合目标检测演示。
+这样更容易兼容 CubeAI，也更适合当前板端资源约束。
 
-## 6. 训练输出
+## 训练产物
 
 训练后会保存：
+
 - `thermal_ai/artifacts/models/best_model.keras`
 - `thermal_ai/artifacts/models/final_model.keras`
 - `thermal_ai/artifacts/models/class_names.json`
@@ -136,7 +174,8 @@ thermal_ai_dataset/
 - `thermal_ai/artifacts/reports/training/collection_suggestions.txt`
 - `thermal_ai/artifacts/reports/training/training_summary.json`
 
-评估指标以检测为主：
+主要评估指标：
+
 - `precision`
 - `recall`
 - `f1-score`
@@ -144,34 +183,44 @@ thermal_ai_dataset/
 - `mean center error px`
 - `exact image match ratio`
 
-## 7. 标注工具
+## 标注工具
 
-当前标注工具文件名仍然保留为：
+标注工具文件名仍然是：
+
 - [annotate_centerpoints.py](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/scripts/annotate_centerpoints.py)
 
-但功能已经改成：
-- **bbox 拖拽标注**
-- 多目标、多类别
+但功能已经是：
+
+- 多目标 bbox 标注
+- 多类别混合标注
 - 保存 `x_min / y_min / x_max / y_max`
 
-使用说明见：
+说明见：
+
 - [ANNOTATE_CENTERPOINTS_USAGE.md](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/docs/ANNOTATE_CENTERPOINTS_USAGE.md)
 
-## 8. 执行命令
+## 执行流程
 
-完整命令清单见：
+常用闭环：
+
+1. 采集 `.bin`
+2. 用标注工具画 `.json`
+3. 运行 `split_dataset.py`
+4. 运行 `check_dataset.py`
+5. 运行 `train_cnn.py`
+6. 运行 `export_tflite.py`
+7. 运行 `validate_tflite.py`
+
+命令清单见：
+
 - [EXECUTION_COMMANDS.md](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/docs/EXECUTION_COMMANDS.md)
 
-常用流程是：
-1. 采集 `.bin`
-2. 用 bbox 工具标注 `.json`
-3. `split_dataset.py`
-4. `check_dataset.py`
-5. `train_cnn.py`
-6. `export_tflite.py`
-7. `validate_tflite.py`
+## 板端接入建议
 
-## 9. 应用扩展建议
+CubeAI 接入说明见：
 
-更偏产品化的后续功能建议见：
+- [CUBEAI_BOARD_PREP.md](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/docs/CUBEAI_BOARD_PREP.md)
+
+如果后续要继续往成品化走，应用方向建议见：
+
 - [APPLICATION_SCENARIOS.md](D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/docs/APPLICATION_SCENARIOS.md)

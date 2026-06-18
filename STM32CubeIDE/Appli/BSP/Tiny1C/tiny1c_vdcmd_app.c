@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "i2c.h"
 #include "tx_api.h"
 
 #define CFG_TINY1C_VDCMD_TEMP_MIN_C          (-43)
@@ -34,6 +35,12 @@ static ir_error_t tiny1c_vdcmd_lock(void)
         return IR_MEM_ALLOC_FAIL;
     }
 
+    if (app_i2c4_bus_lock() != TX_SUCCESS)
+    {
+        (void)tx_mutex_put(&g_tiny1c_vdcmd_mutex);
+        return IR_MEM_ALLOC_FAIL;
+    }
+
     return IR_SUCCESS;
 }
 
@@ -43,6 +50,8 @@ static ir_error_t tiny1c_vdcmd_lock(void)
  */
 static void tiny1c_vdcmd_unlock(void)
 {
+    app_i2c4_bus_unlock();
+
     if (g_tiny1c_vdcmd_mutex_created != 0U)
     {
         (void)tx_mutex_put(&g_tiny1c_vdcmd_mutex);

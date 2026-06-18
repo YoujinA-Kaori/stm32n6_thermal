@@ -365,7 +365,7 @@ void setup_scr_WidgetsDemo(lv_ui *ui)
     ui->WidgetsDemo_status_ffc = thermal_gui_create_status_badge(ui->WidgetsDemo_status_bar, "FFC 自动", lv_color_hex(0x48b3ff), 406, 94);
     ui->WidgetsDemo_status_uart = thermal_gui_create_status_badge(ui->WidgetsDemo_status_bar, "串口 在线", lv_color_hex(0x37c48e), 506, 94);
     ui->WidgetsDemo_status_time = thermal_gui_create_status_badge(ui->WidgetsDemo_status_bar, "16:45", lv_color_hex(0x7bc6ff), 606, 72);
-    ui->WidgetsDemo_status_power = thermal_gui_create_status_badge(ui->WidgetsDemo_status_bar, "电源 78%", lv_color_hex(0xffc15a), 684, 92);
+    ui->WidgetsDemo_status_power = thermal_gui_create_status_badge(ui->WidgetsDemo_status_bar, "BAT --%", lv_color_hex(0xffc15a), 684, 92);
 
     ui->WidgetsDemo_left_panel = lv_obj_create(ui->WidgetsDemo);
     lv_obj_set_pos(ui->WidgetsDemo_left_panel, THERMAL_GUI_MARGIN, THERMAL_GUI_CONTENT_TOP);

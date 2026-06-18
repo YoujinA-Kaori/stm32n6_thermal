@@ -30,9 +30,10 @@
     "seed": 42
   },
   "normalization": {
-    "mode": "celsius_linear_clip",
-    "temp_c_min": 0.0,
-    "temp_c_max": 150.0,
+    "mode": "delta_from_frame_percentile_clip",
+    "background_percentile": 50.0,
+    "delta_c_min": -8.0,
+    "delta_c_max": 80.0,
     "output_dtype": "float32"
   },
   "supervision": {
