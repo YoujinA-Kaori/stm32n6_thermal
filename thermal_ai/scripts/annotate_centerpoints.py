@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Interactive bounding-box annotation tool for thermal .bin frames."""
+"""交互式热像框标注工具，支持在工具内完成样本归类。"""
 
 from __future__ import annotations
 
 import argparse
+import shutil
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
@@ -29,7 +30,7 @@ from src.common import (
 
 
 class AnnotationTool:
-    """Interactive Tk application for multi-object bounding-box labeling."""
+    """多目标热像框标注工具。"""
 
     def __init__(
         self,
@@ -37,12 +38,14 @@ class AnnotationTool:
         bin_paths: list[Path],
         config: dict[str, Any],
         scale: int,
-        raw_root: Path | None,
+        raw_root: Path,
+        input_root: Path | None,
+        session_name: str | None,
     ) -> None:
         try:
             from PIL import Image, ImageDraw, ImageTk
         except ImportError as exc:  # pragma: no cover
-            raise SystemExit(f"Pillow is required for the annotation tool: {exc}") from exc
+            raise SystemExit(f"标注工具依赖 Pillow，请先安装：{exc}") from exc
 
         self.Image = Image
         self.ImageDraw = ImageDraw
@@ -54,6 +57,8 @@ class AnnotationTool:
         self.class_names = get_class_names(config)
         self.detection_class_names = get_detection_class_names(config)
         self.raw_root = raw_root
+        self.input_root = input_root
+        self.session_name = session_name.strip() if session_name is not None and session_name.strip() else None
         self.index = 0
         self.current_primary_class_name: str | None = None
         self.current_objects: list[AnnotatedObject] = []
@@ -72,9 +77,16 @@ class AnnotationTool:
             "circuit_board_abnormal_hotspot": "#36cfc9",
             "empty": "#8c8c8c",
         }
+        self.class_display_names = {
+            "empty": "空场景",
+            "person": "人体",
+            "hot_object": "热源",
+            "circuit_board_normal": "电路板正常",
+            "circuit_board_abnormal_hotspot": "电路板异常热点",
+        }
 
-        self.root.title("Thermal BBox Annotator")
-        self.root.geometry(f"{self.frame_width * self.scale + 140}x{self.frame_height * self.scale + 360}")
+        self.root.title("热像框标注工具")
+        self.root.geometry(f"{self.frame_width * self.scale + 180}x{self.frame_height * self.scale + 380}")
 
         self.info_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="")
@@ -88,7 +100,7 @@ class AnnotationTool:
         self._load_current_sample()
 
     def _build_ui(self) -> None:
-        """Construct the main window."""
+        """构建主界面。"""
         top_frame = tk.Frame(self.root)
         top_frame.pack(fill=tk.X, padx=8, pady=8)
         tk.Label(top_frame, textvariable=self.info_var, anchor="w", justify=tk.LEFT, font=("Microsoft YaHei UI", 10)).pack(fill=tk.X)
@@ -112,9 +124,9 @@ class AnnotationTool:
 
         control_frame = tk.Frame(self.root)
         control_frame.pack(fill=tk.X, padx=8, pady=8)
-        tk.Label(control_frame, text="当前框类别", font=("Microsoft YaHei UI", 10)).grid(row=0, column=0, sticky="w")
+        tk.Label(control_frame, text="框类别", font=("Microsoft YaHei UI", 10)).grid(row=0, column=0, sticky="w")
         tk.Label(control_frame, textvariable=self.selected_class_var, font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=1, sticky="w", padx=(4, 12))
-        tk.Label(control_frame, text="主类别", font=("Microsoft YaHei UI", 10)).grid(row=0, column=2, sticky="w")
+        tk.Label(control_frame, text="归档类别", font=("Microsoft YaHei UI", 10)).grid(row=0, column=2, sticky="w")
         tk.Label(control_frame, textvariable=self.primary_class_var, font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=3, sticky="w", padx=(4, 12))
         tk.Label(control_frame, text="目标数", font=("Microsoft YaHei UI", 10)).grid(row=0, column=4, sticky="w")
         tk.Label(control_frame, textvariable=self.object_count_var, font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=5, sticky="w", padx=(4, 12))
@@ -123,7 +135,8 @@ class AnnotationTool:
         button_frame.pack(fill=tk.X, padx=8)
         buttons = [
             ("保存并下一张", self.save_and_next),
-            ("标记为空", self.mark_empty_and_next),
+            ("标为空场景", self.mark_empty_and_next),
+            ("设为主类别", self.set_primary_class_to_selected),
             ("上一张", self.previous_sample),
             ("下一张", self.next_sample),
             ("删除最后框", self.delete_last_object),
@@ -131,11 +144,11 @@ class AnnotationTool:
             ("退出", self.root.destroy),
         ]
         for index, (label, command) in enumerate(buttons):
-            tk.Button(button_frame, text=label, command=command, width=14).grid(row=0, column=index, padx=3, pady=3)
+            tk.Button(button_frame, text=label, command=command, width=12).grid(row=0, column=index, padx=3, pady=3)
 
         object_list_frame = tk.Frame(self.root)
         object_list_frame.pack(fill=tk.X, padx=8, pady=8)
-        tk.Label(object_list_frame, text="当前框列表:", anchor="w", justify=tk.LEFT, font=("Microsoft YaHei UI", 9, "bold")).pack(fill=tk.X)
+        tk.Label(object_list_frame, text="当前标注框", anchor="w", justify=tk.LEFT, font=("Microsoft YaHei UI", 9, "bold")).pack(fill=tk.X)
         tk.Label(
             object_list_frame,
             textvariable=self.object_list_var,
@@ -145,17 +158,15 @@ class AnnotationTool:
             fg="#333333",
         ).pack(fill=tk.X)
 
+        max_key = len(self.detection_class_names)
         help_lines = [
-            "操作说明:",
-            "1. 鼠标左键按下并拖拽：绘制当前类别框",
-            "2. 鼠标右键：删除点击位置最近的框",
-            "3. Enter / S：保存并下一张",
-            "4. E：标记为空并保存",
-            "5. 数字 1-4：切换目标类别",
-            "6. Delete / Backspace：删除最后一个框",
-            "7. C：清空当前样本所有框",
-            "8. 左 / 右方向键：上一张 / 下一张",
-            "9. Q / Esc：退出",
+            "操作说明：",
+            f"1. 按数字键 1-{max_key} 选择当前要画的框类别。",
+            "2. 鼠标左键拖拽画框。",
+            "3. 按 P 可以把当前选中的框类别设为这张样本的归档类别。",
+            "4. 空场景按 E。",
+            "5. 按 S 或 Enter 保存并切到下一张。",
+            "6. 如果输入来自 thermal_out，保存时会自动把样本移动到 raw/<类别>/<session>/。",
         ]
         tk.Label(
             self.root,
@@ -167,12 +178,14 @@ class AnnotationTool:
         ).pack(fill=tk.X, padx=8, pady=8)
 
     def _bind_keys(self) -> None:
-        """Register keyboard shortcuts."""
+        """注册快捷键。"""
         self.root.bind("<Return>", lambda _event: self.save_and_next())
         self.root.bind("s", lambda _event: self.save_and_next())
         self.root.bind("S", lambda _event: self.save_and_next())
         self.root.bind("e", lambda _event: self.mark_empty_and_next())
         self.root.bind("E", lambda _event: self.mark_empty_and_next())
+        self.root.bind("p", lambda _event: self.set_primary_class_to_selected())
+        self.root.bind("P", lambda _event: self.set_primary_class_to_selected())
         self.root.bind("<Left>", lambda _event: self.previous_sample())
         self.root.bind("<Right>", lambda _event: self.next_sample())
         self.root.bind("<BackSpace>", lambda _event: self.delete_last_object())
@@ -187,41 +200,105 @@ class AnnotationTool:
             self.root.bind(str(index), lambda _event, name=class_name: self._set_selected_class(name))
 
     def _relative_display_path(self, bin_path: Path) -> str:
-        """Build a compact display path."""
-        if self.raw_root is not None:
+        """生成紧凑显示路径。"""
+        for root_path in (self.raw_root, self.input_root):
+            if root_path is None:
+                continue
             try:
-                return str(bin_path.relative_to(self.raw_root))
+                return str(bin_path.relative_to(root_path))
             except ValueError:
-                pass
+                continue
         return str(bin_path)
 
     def _derive_primary_class_name(self, bin_path: Path) -> str | None:
-        """Infer the primary class from folder structure."""
-        if self.raw_root is not None:
-            try:
-                relative = bin_path.relative_to(self.raw_root)
-                if relative.parts:
-                    first_part = relative.parts[0]
-                    if first_part in self.class_names:
-                        return first_part
-            except ValueError:
-                pass
+        """根据目录结构推断主类别。"""
+        try:
+            relative = bin_path.relative_to(self.raw_root)
+            if relative.parts:
+                first_part = relative.parts[0]
+                if first_part in self.class_names:
+                    return first_part
+        except ValueError:
+            pass
 
         for parent in bin_path.parents:
             if parent.name in self.class_names:
                 return parent.name
         return None
 
+    def _derive_target_session_name(self, bin_path: Path) -> str:
+        """保存样本时推断目标 session 目录。"""
+        if self.session_name is not None:
+            return self.session_name
+
+        try:
+            relative = bin_path.relative_to(self.raw_root)
+            if len(relative.parts) >= 3:
+                return relative.parts[1]
+        except ValueError:
+            pass
+
+        if self.input_root is not None:
+            try:
+                relative = bin_path.relative_to(self.input_root)
+                if len(relative.parts) > 1:
+                    return "__".join(relative.parts[:-1]).replace(" ", "_")
+            except ValueError:
+                pass
+            if self.input_root.is_dir():
+                return self.input_root.name
+
+        if bin_path.parent.name:
+            return bin_path.parent.name
+        return "session_default"
+
+    def _derive_target_class_name(self) -> str | None:
+        """解析当前样本的目标类别目录。"""
+        if self.current_empty:
+            return "empty"
+        if self.current_primary_class_name is not None:
+            return self.current_primary_class_name
+        if self.current_objects:
+            return self.current_objects[0].class_name
+        return None
+
+    def _build_target_bin_path(self, source_bin_path: Path, target_class_name: str) -> Path:
+        """构建样本保存到 raw 数据集后的目标路径。"""
+        session_name = self._derive_target_session_name(source_bin_path)
+        return self.raw_root / target_class_name / session_name / source_bin_path.name
+
+    def _move_sample_artifacts(self, source_bin_path: Path, target_bin_path: Path) -> None:
+        """将源 .bin 及同名附件移动到目标目录。"""
+        if source_bin_path == target_bin_path:
+            return
+
+        target_dir = target_bin_path.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        source_artifacts = sorted(path for path in source_bin_path.parent.glob(f"{source_bin_path.stem}.*") if path.is_file())
+
+        for source_artifact_path in source_artifacts:
+            target_artifact_path = target_dir / source_artifact_path.name
+            if source_artifact_path == target_artifact_path:
+                continue
+            if target_artifact_path.exists():
+                raise FileExistsError(f"目标文件已存在：{target_artifact_path}")
+
+        for source_artifact_path in source_artifacts:
+            target_artifact_path = target_dir / source_artifact_path.name
+            if source_artifact_path == target_artifact_path:
+                continue
+            shutil.move(str(source_artifact_path), str(target_artifact_path))
+
     def _clamp_canvas_xy(self, canvas_x: int, canvas_y: int) -> tuple[int, int]:
-        """Clamp one canvas-space point into the valid raw frame range."""
+        """把画布坐标限制在有效热像范围内。"""
         frame_x = max(0, min(self.frame_width - 1, int(canvas_x / self.scale)))
         frame_y = max(0, min(self.frame_height - 1, int(canvas_y / self.scale)))
         return frame_x, frame_y
 
     def _load_current_sample(self) -> None:
-        """Load the current sample into the UI."""
+        """加载当前样本到界面。"""
         if not self.bin_paths:
-            raise SystemExit("no .bin files available for annotation")
+            raise SystemExit("没有可供标注的 .bin 文件")
 
         bin_path = self.bin_paths[self.index]
         frame_u16 = load_temp14_frame(bin_path, self.config)
@@ -241,14 +318,12 @@ class AnnotationTool:
             if annotation is not None and annotation.primary_class_name is not None
             else derived_primary
             if derived_primary is not None
-            else "empty"
+            else None
         )
-        self.current_empty = bool(annotation.is_empty) if annotation is not None else self.current_primary_class_name == "empty"
+        self.current_empty = bool(annotation.is_empty) if annotation is not None else False
         self.current_objects = list(annotation.objects) if annotation is not None else []
         self.drag_start_xy = None
         self.drag_current_xy = None
-        if self.current_primary_class_name == "empty" and not self.current_objects:
-            self.current_empty = True
         if self.current_objects and self.selected_object_class not in self.detection_class_names:
             self.selected_object_class = self.current_objects[0].class_name
 
@@ -257,7 +332,7 @@ class AnnotationTool:
         self._update_status("")
 
     def _refresh_canvas(self) -> None:
-        """Redraw the preview image and all bbox overlays."""
+        """重绘预览图和所有框。"""
         if self.preview_image is None:
             return
 
@@ -271,7 +346,7 @@ class AnnotationTool:
             x_max = int(round(annotated_object.x_max * self.scale))
             y_max = int(round(annotated_object.y_max * self.scale))
             draw.rectangle((x_min, y_min, x_max, y_max), outline=color, width=max(1, self.scale // 2))
-            draw.text((x_min + 2, max(0, y_min - 14)), f"{object_index}:{annotated_object.class_name}", fill=color)
+            draw.text((x_min + 2, max(0, y_min - 14)), f"{object_index}", fill=color)
 
         if self.drag_start_xy is not None and self.drag_current_xy is not None:
             x0, y0 = self.drag_start_xy
@@ -290,47 +365,65 @@ class AnnotationTool:
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo_image)
 
         self.info_var.set(f"[{self.index + 1}/{len(self.bin_paths)}] {self._relative_display_path(self.bin_paths[self.index])}")
-        self.selected_class_var.set(self.selected_object_class)
-        self.primary_class_var.set(self.current_primary_class_name if self.current_primary_class_name is not None else "(未设置)")
-        self.object_count_var.set("empty" if self.current_empty else str(len(self.current_objects)))
+        self.selected_class_var.set(self._display_class_name(self.selected_object_class))
+        self.primary_class_var.set(
+            self._display_class_name(self.current_primary_class_name)
+            if self.current_primary_class_name is not None
+            else "（未设置）"
+        )
+        self.object_count_var.set("空场景" if self.current_empty else str(len(self.current_objects)))
         if self.current_objects:
             object_lines = [
-                f"{index + 1}. {annotated_object.class_name:<22} [{int(annotated_object.x_min):3d},{int(annotated_object.y_min):3d}] -> [{int(annotated_object.x_max):3d},{int(annotated_object.y_max):3d}]"
+                f"{index + 1}. {self._display_class_name(annotated_object.class_name):<12} [{int(annotated_object.x_min):3d},{int(annotated_object.y_min):3d}] -> [{int(annotated_object.x_max):3d},{int(annotated_object.y_max):3d}]"
                 for index, annotated_object in enumerate(self.current_objects)
             ]
             self.object_list_var.set("\n".join(object_lines))
         else:
-            self.object_list_var.set("(当前无标注框，或已标记为空)")
+            self.object_list_var.set("（当前还没有标注框）")
 
     def _update_status(self, message: str) -> None:
-        """Update the transient status label."""
+        """更新状态栏文案。"""
         annotation_path = annotation_path_for_bin(self.bin_paths[self.index])
-        status = f"JSON: {annotation_path.name}"
+        status = f"标注文件：{annotation_path.name}"
         if message:
             status += f" | {message}"
         self.status_var.set(status)
 
+    def _display_class_name(self, class_name: str | None) -> str:
+        """把内部类别名转换为中文显示名。"""
+        if class_name is None:
+            return ""
+        return self.class_display_names.get(class_name, class_name)
+
     def _set_selected_class(self, class_name: str) -> None:
-        """Switch the currently selected object class."""
+        """切换当前要画的框类别。"""
         self.selected_object_class = class_name
+        self.selected_class_var.set(self._display_class_name(class_name))
         self._refresh_canvas()
-        self._update_status(f"当前框类别切换为 {class_name}")
+        self._update_status(f"当前画框类别已切换为：{self._display_class_name(class_name)}")
+
+    def set_primary_class_to_selected(self) -> None:
+        """把当前选中的框类别设为样本归档类别。"""
+        self.current_primary_class_name = self.selected_object_class
+        self.current_empty = False
+        self._refresh_canvas()
+        self._update_status(f"当前样本归档到：{self._display_class_name(self.selected_object_class)}")
 
     def _on_left_press(self, event: tk.Event) -> None:
-        """Start one bbox drag."""
+        """开始拖拽画框。"""
         self.drag_start_xy = self._clamp_canvas_xy(event.x, event.y)
         self.drag_current_xy = self.drag_start_xy
         self._refresh_canvas()
 
     def _on_left_drag(self, event: tk.Event) -> None:
-        """Update the draft bbox while dragging."""
+        """拖拽时更新临时框。"""
         if self.drag_start_xy is None:
             return
         self.drag_current_xy = self._clamp_canvas_xy(event.x, event.y)
         self._refresh_canvas()
 
     def _on_left_release(self, event: tk.Event) -> None:
-        """Commit one bbox when the drag is released."""
+        """松开鼠标后提交一个框。"""
         if self.drag_start_xy is None:
             return
 
@@ -346,7 +439,7 @@ class AnnotationTool:
         self.drag_current_xy = None
         if (x_max - x_min) < 2 or (y_max - y_min) < 2:
             self._refresh_canvas()
-            self._update_status("框太小，已忽略；请拖出更清晰的 bbox")
+            self._update_status("框太小，已忽略")
             return
 
         self.current_objects.append(
@@ -359,16 +452,18 @@ class AnnotationTool:
             )
         )
         self.current_empty = False
-        if self.current_primary_class_name == "empty":
-            derived_primary = self._derive_primary_class_name(self.bin_paths[self.index])
-            self.current_primary_class_name = derived_primary if derived_primary is not None else self.selected_object_class
+        if self.current_primary_class_name is None or self.current_primary_class_name == "empty":
+            self.current_primary_class_name = self.selected_object_class
         self._refresh_canvas()
-        self._update_status(f"新增 {self.selected_object_class} bbox [{x_min},{y_min}] -> [{x_max},{y_max}]")
+        self._update_status(
+            f"已添加 {self._display_class_name(self.selected_object_class)} 标注框 "
+            f"[{x_min},{y_min}] -> [{x_max},{y_max}]"
+        )
 
     def _on_right_click(self, event: tk.Event) -> None:
-        """Remove the nearest annotated box to the clicked point."""
+        """删除离点击位置最近的标注框。"""
         if not self.current_objects:
-            self._update_status("当前没有可删除的框")
+            self._update_status("当前没有可删除的标注框")
             return
 
         x, y = self._clamp_canvas_xy(event.x, event.y)
@@ -386,15 +481,16 @@ class AnnotationTool:
             )
 
         removed = self.current_objects.pop(remove_index)
-        if not self.current_objects:
-            self.current_empty = self.current_primary_class_name == "empty"
+        if not self.current_objects and self.current_primary_class_name == "empty":
+            self.current_empty = True
         self._refresh_canvas()
         self._update_status(
-            f"已删除 {removed.class_name} bbox [{int(removed.x_min)},{int(removed.y_min)}] -> [{int(removed.x_max)},{int(removed.y_max)}]"
+            f"已删除 {self._display_class_name(removed.class_name)} 标注框 "
+            f"[{int(removed.x_min)},{int(removed.y_min)}] -> [{int(removed.x_max)},{int(removed.y_max)}]"
         )
 
     def _build_annotation_payload(self) -> dict[str, Any]:
-        """Serialize the current UI state into the sidecar JSON format."""
+        """把当前界面状态序列化成 JSON 标注格式。"""
         if self.current_empty or not self.current_objects:
             return {
                 "primary_class_name": "empty",
@@ -418,44 +514,55 @@ class AnnotationTool:
         }
 
     def _save_current_annotation(self) -> bool:
-        """Save the current annotation sidecar."""
+        """保存当前标注，并把样本归档到 raw 数据集目录。"""
         bin_path = self.bin_paths[self.index]
-        annotation_path = annotation_path_for_bin(bin_path)
-        derived_primary = self._derive_primary_class_name(bin_path)
-
-        if self.current_empty and derived_primary is not None and derived_primary != "empty":
-            messagebox.showerror(
-                "保存失败",
-                f"当前样本位于 {derived_primary} 目录下，不能直接保存为 empty。\n"
-                "请先把该样本移动到 empty 目录，再做空场景标注。",
-            )
-            return False
+        target_class_name = self._derive_target_class_name()
 
         if not self.current_empty and not self.current_objects:
-            messagebox.showerror("保存失败", "当前不是 empty，但没有任何框。请先拖出目标框或按 E 标为空。")
+            messagebox.showerror("保存失败", "当前样本不是空场景，但还没有标注框。")
             return False
 
-        if not self.current_empty and derived_primary is not None:
+        if target_class_name is None:
+            messagebox.showerror("保存失败", "当前样本还没有设置目标类别。")
+            return False
+
+        if target_class_name not in self.class_names:
+            messagebox.showerror("保存失败", f"不支持的目标类别：{target_class_name}")
+            return False
+
+        if not self.current_empty:
             object_class_names = {annotated_object.class_name for annotated_object in self.current_objects}
-            if derived_primary not in object_class_names:
+            if target_class_name not in object_class_names:
                 messagebox.showerror(
                     "保存失败",
-                    f"当前样本目录主类是 {derived_primary}，但标注框里没有这个类别。\n"
-                    "请确认样本是否放错目录，或者补上主类目标框后再保存。",
+                    f"归档类别 {self._display_class_name(target_class_name)} 没有出现在当前标注框里。",
                 )
                 return False
 
+        target_bin_path = self._build_target_bin_path(bin_path, target_class_name)
+        annotation_path = annotation_path_for_bin(target_bin_path)
+
+        try:
+            self._move_sample_artifacts(bin_path, target_bin_path)
+        except FileExistsError as exc:
+            messagebox.showerror("保存失败", str(exc))
+            return False
+        except OSError as exc:
+            messagebox.showerror("保存失败", f"移动样本文件失败：{exc}")
+            return False
+
+        self.bin_paths[self.index] = target_bin_path
         save_json(annotation_path, self._build_annotation_payload())
-        self._update_status("标注已保存")
+        self._update_status(f"已保存到：{self._relative_display_path(target_bin_path)}")
         return True
 
     def save_and_next(self) -> None:
-        """Save the current annotation and advance to the next sample."""
+        """保存当前标注并切到下一张。"""
         if self._save_current_annotation():
             self.next_sample()
 
     def mark_empty_and_next(self) -> None:
-        """Mark the current frame as empty, save, and advance."""
+        """标记为空场景，保存并切到下一张。"""
         self.current_empty = True
         self.current_primary_class_name = "empty"
         self.current_objects = []
@@ -466,75 +573,76 @@ class AnnotationTool:
             self.next_sample()
 
     def delete_last_object(self) -> None:
-        """Delete the last annotated box in the list."""
+        """删除最后一个标注框。"""
         if not self.current_objects:
-            self._update_status("当前没有可删除的框")
+            self._update_status("当前没有可删除的标注框")
             return
         removed = self.current_objects.pop()
         if not self.current_objects and self.current_primary_class_name == "empty":
             self.current_empty = True
         self._refresh_canvas()
-        self._update_status(f"已删除最后一个框 {removed.class_name}")
+        self._update_status(f"已删除最后一个标注框：{self._display_class_name(removed.class_name)}")
 
     def clear_objects(self) -> None:
-        """Clear all annotated boxes for the current sample without saving."""
+        """清空当前样本的全部标注框。"""
         self.current_objects = []
         self.current_empty = False
         self.drag_start_xy = None
         self.drag_current_xy = None
         self._refresh_canvas()
-        self._update_status("当前样本的所有框已清空")
+        self._update_status("当前样本的标注框已清空")
 
     def next_sample(self) -> None:
-        """Advance to the next sample."""
+        """切到下一张样本。"""
         if self.index >= len(self.bin_paths) - 1:
-            self._update_status("已经是最后一张")
+            self._update_status("已经是最后一张了")
             return
         self.index += 1
         self._load_current_sample()
 
     def previous_sample(self) -> None:
-        """Go back to the previous sample."""
+        """回到上一张样本。"""
         if self.index <= 0:
-            self._update_status("已经是第一张")
+            self._update_status("已经是第一张了")
             return
         self.index -= 1
         self._load_current_sample()
 
 
 def collect_bin_paths(input_path: Path) -> list[Path]:
-    """Collect .bin files from a file or directory input."""
+    """从文件或目录中收集 .bin 文件。"""
     if input_path.is_file():
         if input_path.suffix.lower() != ".bin":
-            raise SystemExit(f"input file is not a .bin: {input_path}")
+            raise SystemExit(f"输入文件不是 .bin：{input_path}")
         return [input_path]
 
     if input_path.is_dir():
         bin_paths = sorted(path for path in input_path.rglob("*.bin") if path.is_file())
         if not bin_paths:
-            raise SystemExit(f"no .bin files found under: {input_path}")
+            raise SystemExit(f"在目录下没有找到 .bin 文件：{input_path}")
         return bin_paths
 
-    raise SystemExit(f"input path does not exist: {input_path}")
+    raise SystemExit(f"输入路径不存在：{input_path}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Build the CLI argument parser."""
-    parser = argparse.ArgumentParser(description="Interactive bounding-box annotation tool for thermal .bin frames")
-    parser.add_argument("--config", type=Path, default=None, help="Path to dataset_config.json")
+    """构建命令行参数。"""
+    parser = argparse.ArgumentParser(description="热像 .bin 框标注工具")
+    parser.add_argument("--config", type=Path, default=None, help="dataset_config.json 路径")
     parser.add_argument(
         "--input",
         type=Path,
         default=None,
-        help="Input .bin file or directory. Defaults to the configured raw dataset root.",
+        help="输入的 .bin 文件或目录。默认使用配置里的 raw 数据集根目录。",
     )
-    parser.add_argument("--raw-root", type=Path, default=None, help="Optional raw dataset root for relative display")
-    parser.add_argument("--scale", type=int, default=4, help="Preview upscaling factor")
+    parser.add_argument("--raw-root", type=Path, default=None, help="归类保存时使用的 raw 数据集根目录")
+    parser.add_argument("--session-name", default=None, help="从外部目录导入样本时使用的 session 名")
+    parser.add_argument("--scale", type=int, default=4, help="预览放大倍数")
     return parser
 
 
 def main() -> int:
-    """Program entry point."""
+    """程序入口。"""
     args = build_arg_parser().parse_args()
     config = load_dataset_config(args.config)
 
@@ -548,7 +656,9 @@ def main() -> int:
         bin_paths=bin_paths,
         config=config,
         scale=args.scale,
-        raw_root=raw_root if raw_root.exists() else None,
+        raw_root=raw_root,
+        input_root=input_path if input_path.exists() else None,
+        session_name=args.session_name,
     )
     root.mainloop()
     return 0

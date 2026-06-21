@@ -14,7 +14,7 @@ Packet format:
   - payload        frame_width * frame_height uint16 values (little-endian)
 
 Usage examples:
-  python tools/uart_temp14_parser.py --port COM5
+  python tools/uart_temp14_parser.py --port COM6
   python tools/uart_temp14_parser.py --hex-file capture.txt --out out_frames
 """
 
@@ -243,7 +243,7 @@ def parse_serial(port: str, baud: int, out_dir: Path, save_bin: bool, save_pgm_f
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(description="STM32N6 thermal UART packet parser")
-    parser.add_argument("--port", help="Serial port, for example COM5")
+    parser.add_argument("--port", default="COM6", help="Serial port, default COM6")
     parser.add_argument("--baud", type=int, default=2000000, help="Serial baud rate")
     parser.add_argument("--hex-file", type=Path, help="Parse a text hex dump instead of live serial data")
     parser.add_argument("--out", type=Path, default=Path("thermal_out"), help="Output directory")
@@ -262,9 +262,6 @@ def main() -> int:
     if args.hex_file:
         parse_hex_file(args.hex_file, out_dir, args.save_bin, args.save_pgm, args.save_csv)
         return 0
-
-    if not args.port:
-        raise SystemExit("either --port or --hex-file is required")
 
     parse_serial(args.port, args.baud, out_dir, args.save_bin, args.save_pgm, args.save_csv, args.limit)
     return 0

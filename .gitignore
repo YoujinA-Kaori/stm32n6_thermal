@@ -71,6 +71,8 @@ tools/__pycache__/
 .headless-ws/
 .headless-ws2/
 .headless-ws3/
+.ai/
+tmp/
 
 # Optional large local data
 # Uncomment if you do not want to upload datasets

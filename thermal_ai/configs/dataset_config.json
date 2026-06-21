@@ -14,7 +14,6 @@
   "class_names": [
     "empty",
     "person",
-    "hot_object",
     "circuit_board_normal",
     "circuit_board_abnormal_hotspot"
   ],
@@ -26,14 +25,14 @@
     "train_ratio": 0.7,
     "val_ratio": 0.15,
     "test_ratio": 0.15,
-    "group_policy": "session_or_filename_prefix",
+    "group_policy": "per_file",
     "seed": 42
   },
   "normalization": {
     "mode": "delta_from_frame_percentile_clip",
     "background_percentile": 50.0,
     "delta_c_min": -8.0,
-    "delta_c_max": 80.0,
+    "delta_c_max": 60.0,
     "output_dtype": "float32"
   },
   "supervision": {
@@ -45,11 +44,28 @@
   "detector": {
     "grid_width": 20,
     "grid_height": 15,
-    "objectness_threshold": 0.35,
-    "class_threshold": 0.35,
-    "nms_iou_threshold": 0.3,
+    "objectness_threshold": 0.75,
+    "class_threshold": 0.75,
+    "score_threshold": 0.9,
+    "nms_iou_threshold": 0.15,
     "eval_iou_threshold": 0.5,
-    "max_detections_per_image": 8
+    "max_detections_per_image": 2,
+    "postprocess_filter": {
+      "enabled": true,
+      "person": {
+        "min_width_px": 8.0,
+        "min_height_px": 18.0,
+        "top_margin_px": 4.0,
+        "side_margin_px": 6.0,
+        "reject_boxes_touching_top_edge": true,
+        "reject_boxes_touching_side_edges": true,
+        "top_band_max_height_px": 56.0,
+        "corner_max_width_px": 52.0,
+        "corner_max_height_px": 64.0,
+        "edge_strip_max_width_px": 42.0,
+        "edge_strip_min_height_px": 58.0
+      }
+    }
   },
   "artifacts": {
     "model_dir": "thermal_ai/artifacts/models",

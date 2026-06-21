@@ -34,6 +34,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "xspi.h"
+#include "npu_cache.h"
 #ifdef DEBUG
 #include "./SYS/sys.h"
 #include "./HyperRAM/hyperram.h"
@@ -83,6 +84,11 @@ lv_ui guider_ui;
 /* Private function prototypes -----------------------------------------------*/
 static void SystemIsolation_Config(void);
 /* USER CODE BEGIN PFP */
+static void npu_config(void);
+static void iac_config(void);
+static void axisram_config(void);
+static void npu_cache_config(void);
+static void low_power_clock_config(void);
 
 /* USER CODE END PFP */
 
@@ -140,6 +146,11 @@ int main(void)
   MX_USART1_UART_Init();
   MX_SDMMC2_SD_Init();
   SystemIsolation_Config();
+  axisram_config();
+  npu_config();
+  iac_config();
+  npu_cache_config();
+  low_power_clock_config();
   /* USER CODE BEGIN 2 */
   /*
    * 以下 UI/触摸初始化流程暂时保留为注释。
@@ -218,12 +229,20 @@ void PeriphCommonClock_Config(void)
 
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_SDMMC2, &RIMC_master);
 
+  /* Thermal AI weights live in XSPI2 octoFlash and are fetched by the NPU
+     during epoch execution, so the NPU master needs the same secure/privileged
+     access model as the rest of the video/display pipeline. */
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_NPU, &RIMC_master);
+
   /*RISUP configuration*/
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_USART1 , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_SDMMC2 , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_DCMIPP , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_DMA2D , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_LTDCL1 , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_NPU , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_XSPI2 , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_XSPIM , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
 
   /* RIF-Aware IPs Config */
 
@@ -320,6 +339,79 @@ void PeriphCommonClock_Config(void)
   * @param  pipe DCMIPP 管道编号。
   * @retval None
   */
+static void npu_config(void)
+{
+  __HAL_RCC_NPU_CLK_ENABLE();
+  __HAL_RCC_NPU_FORCE_RESET();
+  __HAL_RCC_NPU_RELEASE_RESET();
+}
+
+static void axisram_power_on(RAMCFG_TypeDef *instance)
+{
+  if (instance == NULL)
+  {
+    return;
+  }
+
+  /* The project does not currently carry HAL_RAMCFG, so mirror the
+     HAL_RAMCFG_EnableAXISRAM() power-on step directly. */
+  CLEAR_BIT(instance->CR, RAMCFG_CR_SRAMSD);
+  while ((instance->ISR & RAMCFG_ISR_SRAMBUSY) != 0U)
+  {
+  }
+}
+
+static void axisram_config(void)
+{
+  __HAL_RCC_RAMCFG_CLK_ENABLE();
+  __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM5_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM6_MEM_CLK_ENABLE();
+
+  axisram_power_on(RAMCFG_SRAM3_AXI);
+  axisram_power_on(RAMCFG_SRAM4_AXI);
+  axisram_power_on(RAMCFG_SRAM5_AXI);
+  axisram_power_on(RAMCFG_SRAM6_AXI);
+}
+
+static void iac_config(void)
+{
+  __HAL_RCC_IAC_CLK_ENABLE();
+  __HAL_RCC_IAC_FORCE_RESET();
+  __HAL_RCC_IAC_RELEASE_RESET();
+
+  HAL_RIF_IAC_EnableIT(RIF_RISC_PERIPH_INDEX_NPU);
+  HAL_RIF_IAC_EnableIT(RIF_RISC_PERIPH_INDEX_XSPI2);
+  HAL_RIF_IAC_EnableIT(RIF_RISC_PERIPH_INDEX_XSPIM);
+  HAL_NVIC_SetPriority(IAC_IRQn, 5U, 0U);
+  HAL_NVIC_EnableIRQ(IAC_IRQn);
+}
+
+static void npu_cache_config(void)
+{
+  npu_cache_init();
+  npu_cache_enable();
+}
+
+static void low_power_clock_config(void)
+{
+  LL_BUS_EnableClockLowPower(~0);
+  LL_MEM_EnableClockLowPower(~0);
+  LL_AHB1_GRP1_EnableClockLowPower(~0);
+  LL_AHB2_GRP1_EnableClockLowPower(~0);
+  LL_AHB3_GRP1_EnableClockLowPower(~0);
+  LL_AHB4_GRP1_EnableClockLowPower(~0);
+  LL_AHB5_GRP1_EnableClockLowPower(~0);
+  LL_APB1_GRP1_EnableClockLowPower(~0);
+  LL_APB1_GRP2_EnableClockLowPower(~0);
+  LL_APB2_GRP1_EnableClockLowPower(~0);
+  LL_APB4_GRP1_EnableClockLowPower(~0);
+  LL_APB4_GRP2_EnableClockLowPower(~0);
+  LL_APB5_GRP1_EnableClockLowPower(~0);
+  LL_MISC_EnableClockLowPower(~0);
+}
+
 void HAL_DCMIPP_PIPE_FrameEventCallback(DCMIPP_HandleTypeDef *dcmipp_handle, uint32_t pipe)
 {
   tiny1c_thermal_app_on_frame_event(dcmipp_handle, pipe);

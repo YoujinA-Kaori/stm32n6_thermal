@@ -1043,3 +1043,121 @@ Likely next task in the next conversation:
   - consecutive-frame confirmation
   - screenshot evidence capture
 - Hand detection is no longer part of the recommended default product path.
+
+## 2026-06-21 NPU / CubeAI Bring-Up Notes
+
+- 本轮已确认：
+  - **当前板端 NPU 推理主链已经跑通**
+  - 能看到跟随实时场景变化的框时，说明不是“还没开始推理”，而是 `LL_ATON_RT_Main(&NN_Instance_thermal)` 已经真正执行并产生了有效输出
+
+### 当前最重要的硬件/底层注意事项
+
+- 对 STM32N6 上这条 CubeAI/NPU 路径，**只打开 AXISRAM 时钟不够**。
+- 除了：
+  - `__HAL_RCC_RAMCFG_CLK_ENABLE()`
+  - `__HAL_RCC_AXISRAM3/4/5/6_MEM_CLK_ENABLE()`
+  还必须确保：
+  - `SRAM3/4/5/6` 没有停留在 `shutdown`
+  - 需要执行与 `HAL_RAMCFG_EnableAXISRAM()` 等价的 **power-on** 动作
+- 本项目本轮最关键的收口点就是这里：
+  - 如果 AXISRAM5 输入区/输出区表面地址正常，但 NPU 输出始终像没写回，很可能不是权重没烧，而是 `AXISRAM` 实际没真正 power on
+- 一个强信号是：
+  - 右上角 AI 状态长期停在类似 `AIWI 43 00`
+  - 其中：
+    - `W` 说明 CPU 侧读 `0x71000000` 权重签名是对的
+    - `43` 说明 objectness 接近“全 0 输出”时的固定值
+    - `00` 说明输出首字节就是 `0x00`
+  - 这种情况下，优先怀疑：
+    - `AXISRAM power-on / RAMCFG`
+    - NPU 输出回写链路
+  - 不要先回头怀疑 GUI
+
+### 当前权重烧录注意事项
+
+- **应用固件 hex 不等于 AI 权重也被烧进去**
+- 当前 AI 权重文件需要单独烧录：
+  - `thermal_atonbuf.xSPI2.raw`
+  - `thermal_atonbuf.xSPI2.bin`
+  - `thermal_atonbuf.xSPI2.hex`
+- 当前这版 `thermal` 模型确认使用的外部权重地址窗口是：
+  - `0x71000000 ~ 0x7100F130`
+- 所以以后如果再次出现：
+  - 程序能跑
+  - GUI 正常
+  - 但 AI 永远没有有效输出
+  不要默认认为“权重一定已经在位”，应单独核对：
+  - 当前模型生成报告
+  - 当前烧录的 `atonbuf` 文件
+  - 当前外部 Flash 映射地址
+
+### 当前 AI 调试注意事项
+
+- 本轮为定位问题，曾加入 **reference input** 调试模式：
+  - `CFG_THERMAL_AI_USE_REFERENCE_INPUT`
+- 该模式打开时，板端不会吃实时温度流，而是反复喂固定参考样本。
+- 典型现象是：
+  - 总能稳定出框
+  - 框位置基本不变
+  - 看起来“AI 成功了”，但不跟现场目标移动
+- 因此：
+  - 只要是准备给用户实际使用/验证实时效果，必须确认：
+    - `CFG_THERMAL_AI_USE_REFERENCE_INPUT == 0U`
+
+### 当前板端后处理接口假设
+
+- 这版板端 `app_threadx.c` 不是“任意模型都能直接替换”，当前写死了以下接口假设：
+  - 输入：
+    - `160 x 120 x 1`
+  - 检测头网格：
+    - `20 x 15`
+  - 每格输出通道：
+    - `8`
+  - 当前类别顺序：
+    - `person`
+    - `circuit_board_normal`
+    - `circuit_board_abnormal_hotspot`
+  - 网络实例名：
+    - `thermal`
+- 因此以后如果重新训练新模型：
+  - **只有在输入尺寸、输出张量形状、类别顺序、网络名都兼容时，才适合直接替换 `thermal.c/.h + atonbuf`**
+  - 如果改成：
+    - 仅 `person` 单类
+    - 不同 grid
+    - 不同输出通道数
+    - YOLO/分类等别的头
+    - 网络名不叫 `thermal`
+    就不能只替换生成文件，必须同步修改：
+    - `Appli/Core/Src/app_threadx.c`
+    - 输入预处理
+    - 输出 decode
+    - 类别映射
+    - 阈值/NMS
+
+### 当前模型误检现象的判断边界
+
+- 当出现以下情况时：
+  - NPU 已稳定运行
+  - 实时场景里人能大体识别出来
+  - 但空背景也有两个框
+  - 且框分数总在较高区间
+  当前更应判断为：
+  - **模型/训练/后处理阈值问题**
+  - 不再是“NPU 没跑起来”
+- 也就是说：
+  - “能实时跟人动” 与 “误检仍然很多” 可以同时成立
+  - 前者说明板端通路通了
+  - 后者说明模型还需要继续优化
+
+### 对后续 Agent 的强提醒
+
+1. 如果 AI 再次完全无输出，先看：
+   - `AXISRAM power-on`
+   - 权重是否单独烧录
+   - `reference input` 是否误开
+   - 不要先怪 GUI
+2. 不要把“能编过”当成“能推理”。
+   - 这条链路里，编译成功、程序运行、NPU 实际出有效输出，是三件不同的事
+3. 不要默认新模型都能直接替换。
+   - 先核对输入/输出/类别接口是否与 `app_threadx.c` 当前假设一致
+4. 不要把最终方案建立在 `Debug/Release` 生成物手改上。
+   - 仍然优先修改 `.project` / `.cproject` / 工程源文件

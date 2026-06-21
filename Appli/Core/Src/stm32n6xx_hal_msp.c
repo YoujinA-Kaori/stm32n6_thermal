@@ -83,5 +83,25 @@ void HAL_MspInit(void)
 }
 
 /* USER CODE BEGIN 1 */
+void HAL_CACHEAXI_MspInit(CACHEAXI_HandleTypeDef *hcacheaxi)
+{
+  if (hcacheaxi->Instance == CACHEAXI)
+  {
+    __HAL_RCC_CACHEAXIRAM_MEM_CLK_ENABLE();
+    __HAL_RCC_CACHEAXI_CLK_ENABLE();
+    __HAL_RCC_CACHEAXI_FORCE_RESET();
+    __HAL_RCC_CACHEAXI_RELEASE_RESET();
+  }
+}
+
+void HAL_CACHEAXI_MspDeInit(CACHEAXI_HandleTypeDef *hcacheaxi)
+{
+  if (hcacheaxi->Instance == CACHEAXI)
+  {
+    __HAL_RCC_CACHEAXIRAM_MEM_CLK_DISABLE();
+    __HAL_RCC_CACHEAXI_CLK_DISABLE();
+    __HAL_RCC_CACHEAXI_FORCE_RESET();
+  }
+}
 
 /* USER CODE END 1 */

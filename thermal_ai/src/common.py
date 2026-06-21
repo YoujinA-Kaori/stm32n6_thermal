@@ -98,6 +98,16 @@ class Detection:
         """Return the vertical box center in pixel coordinates."""
         return (self.y_min + self.y_max) * 0.5
 
+    @property
+    def width(self) -> float:
+        """Return the box width in pixels."""
+        return max(self.x_max - self.x_min, 0.0)
+
+    @property
+    def height(self) -> float:
+        """Return the box height in pixels."""
+        return max(self.y_max - self.y_min, 0.0)
+
 
 def load_json(json_path: Path) -> dict[str, Any]:
     """Load a JSON file into a dictionary."""
@@ -393,10 +403,25 @@ def normalize_temp14_frame(
     return normalized
 
 
+def _stretch_preview_contrast(normalized_frame: np.ndarray) -> np.ndarray:
+    """Apply display-only percentile stretch to improve grayscale preview readability."""
+    preview_low = float(np.percentile(normalized_frame, 2.0))
+    preview_high = float(np.percentile(normalized_frame, 98.0))
+    if not np.isfinite(preview_low) or not np.isfinite(preview_high):
+        return normalized_frame
+
+    preview_span = preview_high - preview_low
+    if preview_span < 1e-4:
+        return normalized_frame
+
+    return np.clip((normalized_frame - preview_low) / preview_span, 0.0, 1.0).astype(np.float32)
+
+
 def temp14_preview_u8(frame_u16: np.ndarray, config: dict[str, Any]) -> np.ndarray:
-    """Create an 8-bit grayscale preview using the same model-side normalization."""
+    """Create an 8-bit grayscale preview using model normalization plus display-only contrast stretch."""
     normalized = normalize_temp14_frame(frame_u16, config, add_channel_axis=False)
-    return np.clip(np.round(normalized * 255.0), 0, 255).astype(np.uint8)
+    preview_normalized = _stretch_preview_contrast(normalized)
+    return np.clip(np.round(preview_normalized * 255.0), 0, 255).astype(np.uint8)
 
 
 def clip_box_to_frame(box: AnnotatedObject, frame_width: int, frame_height: int) -> AnnotatedObject:
@@ -580,6 +605,72 @@ def apply_detection_nms(detections: list[Detection], iou_threshold: float, max_d
     return kept[:max_detections]
 
 
+def _passes_detection_post_filter(
+    detection: Detection,
+    frame_width: int,
+    frame_height: int,
+    filter_cfg: dict[str, Any],
+) -> bool:
+    """Apply lightweight geometric filters to decoded boxes."""
+    min_width = float(filter_cfg.get("min_width_px", 0.0))
+    min_height = float(filter_cfg.get("min_height_px", 0.0))
+    if detection.width < min_width or detection.height < min_height:
+        return False
+
+    top_margin = float(filter_cfg.get("top_margin_px", 0.0))
+    side_margin = float(filter_cfg.get("side_margin_px", 0.0))
+    top_band_max_height = float(filter_cfg.get("top_band_max_height_px", 0.0))
+    corner_max_width = float(filter_cfg.get("corner_max_width_px", 0.0))
+    corner_max_height = float(filter_cfg.get("corner_max_height_px", 0.0))
+    edge_strip_max_width = float(filter_cfg.get("edge_strip_max_width_px", 0.0))
+    edge_strip_min_height = float(filter_cfg.get("edge_strip_min_height_px", 0.0))
+
+    touches_top = detection.y_min <= top_margin
+    touches_left = detection.x_min <= side_margin
+    touches_right = detection.x_max >= float(frame_width) - side_margin
+
+    if bool(filter_cfg.get("reject_boxes_touching_top_edge", False)) and touches_top:
+        return False
+    if bool(filter_cfg.get("reject_boxes_touching_side_edges", False)) and (touches_left or touches_right):
+        return False
+    if touches_top and detection.height <= top_band_max_height:
+        return False
+    if touches_top and touches_left and detection.width <= corner_max_width and detection.height <= corner_max_height:
+        return False
+    if touches_top and touches_right and detection.width <= corner_max_width and detection.height <= corner_max_height:
+        return False
+    if touches_left and detection.width <= edge_strip_max_width and detection.height >= edge_strip_min_height:
+        return False
+    if touches_right and detection.width <= edge_strip_max_width and detection.height >= edge_strip_min_height:
+        return False
+
+    return True
+
+
+def apply_detection_post_filters(
+    detections: list[Detection],
+    config: dict[str, Any],
+    frame_width: int,
+    frame_height: int,
+) -> list[Detection]:
+    """Apply optional class-specific decoded-box filters before NMS."""
+    detector_cfg = config.get("detector", {})
+    post_cfg = detector_cfg.get("postprocess_filter")
+    if not isinstance(post_cfg, dict) or not bool(post_cfg.get("enabled", False)):
+        return detections
+
+    filtered: list[Detection] = []
+    for detection in detections:
+        class_filter_cfg = post_cfg.get(detection.class_name)
+        if not isinstance(class_filter_cfg, dict):
+            filtered.append(detection)
+            continue
+        if _passes_detection_post_filter(detection, frame_width, frame_height, class_filter_cfg):
+            filtered.append(detection)
+
+    return filtered
+
+
 def decode_detection_map(detection_map: np.ndarray, config: dict[str, Any]) -> list[Detection]:
     """Decode one detector output tensor into scored bounding boxes."""
     grid_height, grid_width = get_detector_grid_shape(config)
@@ -589,6 +680,7 @@ def decode_detection_map(detection_map: np.ndarray, config: dict[str, Any]) -> l
     detection_class_names = get_detection_class_names(config)
     objectness_threshold = float(detector_cfg["objectness_threshold"])
     class_threshold = float(detector_cfg["class_threshold"])
+    score_threshold = float(detector_cfg.get("score_threshold", class_threshold))
     nms_iou_threshold = float(detector_cfg["nms_iou_threshold"])
     max_detections = int(detector_cfg["max_detections_per_image"])
 
@@ -612,7 +704,7 @@ def decode_detection_map(detection_map: np.ndarray, config: dict[str, Any]) -> l
             class_index = int(np.argmax(class_scores))
             class_score = float(class_scores[class_index])
             detection_score = objectness_score * class_score
-            if class_score < class_threshold or detection_score < class_threshold:
+            if class_score < class_threshold or detection_score < score_threshold:
                 continue
 
             offset_x, offset_y, width_norm, height_norm = bbox_map[grid_y, grid_x]
@@ -636,6 +728,7 @@ def decode_detection_map(detection_map: np.ndarray, config: dict[str, Any]) -> l
                 )
             )
 
+    detections = apply_detection_post_filters(detections, config, frame_width, frame_height)
     return apply_detection_nms(detections, nms_iou_threshold, max_detections)
 
 

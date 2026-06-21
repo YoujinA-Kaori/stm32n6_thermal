@@ -3,3 +3,4 @@
 ################################################################################
 
 LIBS += ../ThirdParty/libirtemp/libirtemp.lib
+LIBS += ../../../Middlewares/ST/AI/Lib/NetworkRuntime1020_CM55_GCC.a

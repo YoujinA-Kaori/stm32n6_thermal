@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check whether dataset labels match the expected five-class layout."""
+"""Check whether dataset labels match the expected config-defined layout."""
 
 from __future__ import annotations
 

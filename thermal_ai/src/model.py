@@ -48,13 +48,24 @@ def detection_loss(y_true, y_pred):
     bbox_logits = y_pred[..., 1:5]
     class_logits = y_pred[..., 5:]
 
-    objectness_loss = tf_module.nn.sigmoid_cross_entropy_with_logits(labels=objectness_true, logits=objectness_logits)
-    objectness_loss = tf_module.reduce_mean(objectness_loss)
-
     positive_mask = objectness_true
+    negative_mask = tf_module.ones_like(objectness_true) - objectness_true
+    objectness_loss = tf_module.nn.sigmoid_cross_entropy_with_logits(labels=objectness_true, logits=objectness_logits)
+    objectness_positive_loss = tf_module.reduce_sum(objectness_loss * positive_mask) / _safe_positive_denominator(positive_mask)
+    objectness_negative_loss = tf_module.reduce_sum(objectness_loss * negative_mask) / _safe_positive_denominator(negative_mask)
+    objectness_loss = (
+        tf_module.constant(2.0, dtype=tf_module.float32) * objectness_positive_loss
+        + tf_module.constant(0.5, dtype=tf_module.float32) * objectness_negative_loss
+    )
+
     positive_denominator = _safe_positive_denominator(positive_mask) * tf_module.constant(4.0, dtype=tf_module.float32)
     bbox_pred = tf_module.nn.sigmoid(bbox_logits)
-    bbox_loss = tf_module.keras.losses.huber(bbox_true, bbox_pred)
+    # Compute elementwise Huber so the positive-cell mask can be applied on all four bbox channels.
+    bbox_error = bbox_true - bbox_pred
+    bbox_abs_error = tf_module.abs(bbox_error)
+    bbox_quadratic = tf_module.minimum(bbox_abs_error, tf_module.constant(1.0, dtype=tf_module.float32))
+    bbox_linear = bbox_abs_error - bbox_quadratic
+    bbox_loss = tf_module.constant(0.5, dtype=tf_module.float32) * tf_module.square(bbox_quadratic) + bbox_linear
     bbox_loss = tf_module.reduce_sum(bbox_loss * positive_mask) / positive_denominator
 
     class_loss = tf_module.nn.sigmoid_cross_entropy_with_logits(labels=class_true, logits=class_logits)

@@ -9,6 +9,7 @@
 - 训练与部署围绕 `TensorFlow / Keras / TFLite / CubeAI`
 - 标注、训练、导出、验证都集中放在 `thermal_ai/`
 - 板端推理最终仍只走 `ST CubeAI`
+- 当前最终交付产物以验证通过的 `.tflite` 为准，`.keras` 只是训练中间产物
 
 ## 当前检测类别
 
@@ -16,14 +17,12 @@
 
 - `empty`
 - `person`
-- `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
-其中真正进入检测头预测的是 4 个非空类：
+其中真正进入检测头预测的是 3 个非空类：
 
 - `person`
-- `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
@@ -41,7 +40,7 @@
 当前默认配置：
 
 - 背景参考：当前帧 `50% percentile`，也就是中位数
-- 温差裁剪范围：`[-8, 80]` 摄氏度
+- 温差裁剪范围：`[-8, 60]` 摄氏度
 
 公式：
 
@@ -49,7 +48,7 @@
 temp_c = raw_temp14 / 16.0 - 273.15
 background_c = percentile(temp_c, 50)
 delta_c = temp_c - background_c
-normalized = clip((delta_c - (-8.0)) / (80.0 - (-8.0)), 0.0, 1.0)
+normalized = clip((delta_c - (-8.0)) / (60.0 - (-8.0)), 0.0, 1.0)
 ```
 
 这样做的目的不是保留绝对温度，而是增强“目标相对背景”的热对比，降低环境整体升温或降温带来的影响。
@@ -60,7 +59,10 @@ normalized = clip((delta_c - (-8.0)) / (80.0 - (-8.0)), 0.0, 1.0)
 - 电路板异常告警不要只靠这张归一化图判断
 - 工程上仍建议结合原始 `temp14` 做绝对温差阈值和连续帧确认
 
-当前把 `delta_c_max` 提到 `80`，是为了让电路板短路/异常热点场景不那么容易在模型输入阶段过早饱和。
+当前把 `delta_c_max` 设为 `60`，是为了在“人体 + PCB”统一单模型里做折中：
+
+- 比 `40` 更不容易把板上异常热点过早压平
+- 比 `80` 更能保住人体和普通热区的灰度层次
 
 ## 坐标方向约定
 
@@ -99,7 +101,6 @@ thermal_ai_dataset/
   raw/
     empty/
     person/
-    hot_object/
     circuit_board_normal/
     circuit_board_abnormal_hotspot/
   processed/
@@ -124,7 +125,7 @@ thermal_ai_dataset/
       "y_max": 108
     },
     {
-      "class_name": "hot_object",
+      "class_name": "circuit_board_abnormal_hotspot",
       "x_min": 108,
       "y_min": 40,
       "x_max": 136,
@@ -168,6 +169,8 @@ thermal_ai_dataset/
 
 - `thermal_ai/artifacts/models/best_model.keras`
 - `thermal_ai/artifacts/models/final_model.keras`
+- `thermal_ai/artifacts/models/best_model.tflite`
+- `thermal_ai/artifacts/models/best_model_int8.tflite`
 - `thermal_ai/artifacts/models/class_names.json`
 - `thermal_ai/artifacts/models/detection_class_names.json`
 - `thermal_ai/artifacts/reports/training/detection_report.txt`
@@ -182,6 +185,10 @@ thermal_ai_dataset/
 - `mean IoU`
 - `mean center error px`
 - `exact image match ratio`
+
+其中真正给 CubeAI / 板端部署的最终文件，应优先使用验证通过的 `.tflite`，通常是：
+
+- `thermal_ai/artifacts/models/best_model_int8.tflite`
 
 ## 标注工具
 

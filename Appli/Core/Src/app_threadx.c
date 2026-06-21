@@ -39,6 +39,7 @@
 #include "app_filex.h"
 #include "i2c.h"
 #include "libirtemp.h"
+#include "../../../Middlewares/ST/AI/Npu/ll_aton/ll_aton_runtime.h"
 #include "thermal_ai_runtime.h"
 #include "BQ27441/bq27441g1a.h"
 #include "Tiny1C/tiny1c_thermal_app.h"
@@ -62,14 +63,25 @@ typedef struct __attribute__((packed))
   uint16_t max_temp14;
 } app_threadx_uart_stream_header_t;
 
+typedef struct
+{
+  uint8_t class_id;
+  uint16_t confidence_permille;
+  float score;
+  float x_min;
+  float y_min;
+  float x_max;
+  float y_max;
+} app_threadx_ai_candidate_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define CFG_THERMAL_THREAD_STACK_SIZE         4096U
-#define CFG_THERMAL_THREAD_PRIORITY           10U
+#define CFG_THERMAL_THREAD_PRIORITY           13U
 #define CFG_GUI_THREAD_STACK_SIZE             8192U
-#define CFG_GUI_THREAD_PRIORITY               12U
+#define CFG_GUI_THREAD_PRIORITY               10U
 #define CFG_UART_STREAM_THREAD_STACK_SIZE     4096U
 #define CFG_UART_STREAM_THREAD_PRIORITY       15U
 #define CFG_UART_STREAM_SOURCE_WIDTH          160U
@@ -83,6 +95,13 @@ typedef struct __attribute__((packed))
 #define CFG_UART_STREAM_PACKET_TYPE_TEMP14    0x0001U
 #define CFG_UART_STREAM_PERIOD_MS             333U
 #define CFG_UART_STREAM_PERIOD_TICKS          (((CFG_UART_STREAM_PERIOD_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
+#define CFG_THERMAL_AI_MIN_INTERVAL_MS        500U
+#define CFG_THERMAL_AI_MIN_INTERVAL_TICKS     (((CFG_THERMAL_AI_MIN_INTERVAL_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
+#define CFG_THERMAL_AI_DIAG_STAGE_SETTLE_MS   150U
+#define CFG_THERMAL_AI_DIAG_STAGE_SETTLE_TICKS (((CFG_THERMAL_AI_DIAG_STAGE_SETTLE_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
+
+#define CFG_THERMAL_AI_ENABLE                 1U
+#define CFG_THERMAL_AI_USE_REFERENCE_INPUT    0U
 #define CFG_UART_COMMAND_THREAD_STACK_SIZE    4096U
 #define CFG_UART_COMMAND_THREAD_PRIORITY      16U
 #define CFG_UART_COMMAND_RX_TIMEOUT_MS        20U
@@ -110,6 +129,34 @@ typedef struct __attribute__((packed))
 #define CFG_BATTERY_POLL_PERIOD_MS            1000U
 #define CFG_BATTERY_POLL_PERIOD_TICKS         (((CFG_BATTERY_POLL_PERIOD_MS * TX_TIMER_TICKS_PER_SECOND) + 999U) / 1000U)
 #define CFG_BATTERY_I2C_TIMEOUT_MS            100U
+#define CFG_THERMAL_AI_INPUT_WIDTH            160U
+#define CFG_THERMAL_AI_INPUT_HEIGHT           120U
+#define CFG_THERMAL_AI_INPUT_PIXELS           (CFG_THERMAL_AI_INPUT_WIDTH * CFG_THERMAL_AI_INPUT_HEIGHT)
+#define CFG_THERMAL_AI_GRID_WIDTH             20U
+#define CFG_THERMAL_AI_GRID_HEIGHT            15U
+#define CFG_THERMAL_AI_OUTPUT_CHANNELS        8U
+#define CFG_THERMAL_AI_OUTPUT_BYTES           (CFG_THERMAL_AI_GRID_WIDTH * CFG_THERMAL_AI_GRID_HEIGHT * CFG_THERMAL_AI_OUTPUT_CHANNELS)
+#define CFG_THERMAL_AI_HISTOGRAM_BINS         16384U
+#define CFG_THERMAL_AI_MAX_CANDIDATES         (CFG_THERMAL_AI_GRID_WIDTH * CFG_THERMAL_AI_GRID_HEIGHT)
+#define CFG_THERMAL_AI_BACKGROUND_PERCENT_NUM 50U
+#define CFG_THERMAL_AI_BACKGROUND_PERCENT_DEN 100U
+#define CFG_THERMAL_AI_DELTA_TEMP14_MIN       (-128.0f)
+#define CFG_THERMAL_AI_DELTA_TEMP14_MAX       (960.0f)
+#define CFG_THERMAL_AI_DELTA_TEMP14_SPAN      (CFG_THERMAL_AI_DELTA_TEMP14_MAX - CFG_THERMAL_AI_DELTA_TEMP14_MIN)
+#define CFG_THERMAL_AI_OBJECTNESS_THRESHOLD   0.45f
+#define CFG_THERMAL_AI_CLASS_THRESHOLD        0.50f
+#define CFG_THERMAL_AI_SCORE_THRESHOLD        0.30f
+#define CFG_THERMAL_AI_NMS_IOU_THRESHOLD      0.15f
+#define CFG_THERMAL_AI_MAX_DETECTIONS         2U
+#define CFG_THERMAL_AI_PERSON_MIN_WIDTH_PX    8.0f
+#define CFG_THERMAL_AI_PERSON_MIN_HEIGHT_PX   18.0f
+#define CFG_THERMAL_AI_PERSON_TOP_MARGIN_PX   4.0f
+#define CFG_THERMAL_AI_PERSON_SIDE_MARGIN_PX  6.0f
+#define CFG_THERMAL_AI_PERSON_TOP_BAND_MAX_H  56.0f
+#define CFG_THERMAL_AI_PERSON_CORNER_MAX_W    52.0f
+#define CFG_THERMAL_AI_PERSON_CORNER_MAX_H    64.0f
+#define CFG_THERMAL_AI_PERSON_EDGE_STRIP_MAX_W 42.0f
+#define CFG_THERMAL_AI_PERSON_EDGE_STRIP_MIN_H 58.0f
 
 /* USER CODE END PD */
 
@@ -126,6 +173,7 @@ static TX_THREAD g_uart_stream_thread;
 static TX_THREAD g_uart_command_thread;
 static TX_THREAD g_extrema_query_thread;
 static TX_THREAD g_battery_thread;
+static TX_MUTEX g_thermal_ai_mutex;
 static ULONG g_thermal_thread_stack[CFG_THERMAL_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_gui_thread_stack[CFG_GUI_THREAD_STACK_SIZE / sizeof(ULONG)];
 static ULONG g_uart_stream_thread_stack[CFG_UART_STREAM_THREAD_STACK_SIZE / sizeof(ULONG)];
@@ -160,6 +208,50 @@ static uint16_t g_gui_fullscreen_rgb565_frame[CFG_GUI_FULLSCREEN_WIDTH * CFG_GUI
   __attribute__((section(".EXTRAM"), aligned(32)));
 static uint16_t g_uart_file_rgb565_frame[CFG_UART_FILE_MAX_PIXELS]
   __attribute__((section(".EXTRAM"), aligned(32)));
+static uint16_t g_thermal_ai_oriented_temp14[CFG_THERMAL_AI_INPUT_PIXELS];
+static uint16_t g_thermal_ai_histogram[CFG_THERMAL_AI_HISTOGRAM_BINS];
+static app_threadx_ai_candidate_t g_thermal_ai_candidates[CFG_THERMAL_AI_MAX_CANDIDATES];
+static app_threadx_ai_candidate_t g_thermal_ai_kept_candidates[CFG_THERMAL_AI_MAX_CANDIDATES];
+static thermal_ai_runtime_t g_thermal_ai_runtime;
+static uint8_t g_thermal_ai_overlay_ready = 0U;
+static uint8_t g_thermal_ai_model_ready = 0U;
+static uint32_t g_thermal_ai_last_inference_ms = 0U;
+static volatile uint8_t g_thermal_ai_iac_fault_latched = 0U;
+static volatile uint32_t g_thermal_ai_iac_fault_count = 0U;
+static volatile uint32_t g_thermal_ai_iac_last_periph_id = 0U;
+static volatile uint8_t g_thermal_ai_diag_stage = 0U;
+static volatile uint32_t g_thermal_ai_diag_run_count = 0U;
+static volatile uint16_t g_thermal_ai_diag_raw_candidate_count = 0U;
+static volatile uint16_t g_thermal_ai_diag_postfilter_candidate_count = 0U;
+static volatile uint16_t g_thermal_ai_diag_max_score_permille = 0U;
+static volatile uint16_t g_thermal_ai_diag_max_objectness_permille = 0U;
+static volatile uint8_t g_thermal_ai_diag_output_layout = 0U;
+static volatile uint8_t g_thermal_ai_diag_weights_ok = 0U;
+static volatile uint8_t g_thermal_ai_diag_output_byte0 = 0U;
+static const LL_Buffer_InfoTypeDef *g_thermal_ai_input_info = NULL;
+static const LL_Buffer_InfoTypeDef *g_thermal_ai_output_info = NULL;
+static int8_t *g_thermal_ai_input_buffer = NULL;
+static int8_t *g_thermal_ai_output_buffer = NULL;
+static lv_obj_t *g_thermal_ai_preview_boxes[CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS];
+static lv_obj_t *g_thermal_ai_preview_labels[CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS];
+static lv_obj_t *g_thermal_ai_fullscreen_boxes[CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS];
+static lv_obj_t *g_thermal_ai_fullscreen_labels[CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS];
+
+#if (CFG_THERMAL_AI_USE_REFERENCE_INPUT != 0U)
+extern const int8_t g_thermal_ai_reference_input[];
+extern const int8_t g_thermal_ai_reference_input_end[];
+
+__asm__(
+    ".section .rodata\n"
+    ".global g_thermal_ai_reference_input\n"
+    "g_thermal_ai_reference_input:\n"
+    ".incbin \"D:/PracticeProject/Stm32/stm32n6_thermal/thermal_ai/artifacts/reports/cubeai_inputs/best_model_int8_person_frame_00001181/input_model_dtype_nhwc.int8.raw\"\n"
+    ".global g_thermal_ai_reference_input_end\n"
+    "g_thermal_ai_reference_input_end:\n"
+    ".balign 4\n");
+#endif
+
+LL_ATON_DECLARE_NAMED_NN_INSTANCE_AND_INTERFACE(thermal);
 
 /* USER CODE END PV */
 
@@ -191,6 +283,11 @@ static int32_t app_threadx_temp14_to_centi_celsius(uint16_t temp14_value);
 static int32_t app_threadx_temp14_to_compensated_centi_celsius(uint16_t temp14_value);
 static int32_t app_threadx_centi_celsius_to_unit_centi_celsius(int32_t temp_centi_c, uint8_t unit_celsius);
 static int32_t app_threadx_float_to_centi_celsius(float temp_c);
+static uint16_t app_threadx_temp14_get_preview_oriented_sample(const uint16_t *temp14_frame,
+                                                               uint16_t frame_width,
+                                                               uint16_t frame_height,
+                                                               uint16_t preview_x,
+                                                               uint16_t preview_y);
 static IrPoint_t app_threadx_build_center_point(uint16_t frame_width, uint16_t frame_height);
 static uint16_t app_threadx_rgb565_average4(uint16_t c00,
                                             uint16_t c10,
@@ -200,6 +297,8 @@ static void app_threadx_gui_set_badge_text(lv_obj_t *badge, const char *text);
 static void app_threadx_gui_update_preview(lv_ui *ui);
 static void app_threadx_gui_update_fullscreen_image(void);
 static void app_threadx_gui_format_battery_text(char *buffer, uint32_t buffer_size);
+static void app_threadx_gui_format_ai_status_text(char *buffer, uint32_t buffer_size);
+static void app_threadx_thermal_ai_set_diag_stage(uint8_t stage, uint8_t allow_settle);
 static void app_threadx_gui_update_preview_layer(lv_obj_t *preview_img,
                                                  lv_obj_t *preview_center_temp,
                                                  lv_obj_t *preview_max_temp,
@@ -220,6 +319,43 @@ static void app_threadx_gui_update_preview_layer(lv_obj_t *preview_img,
                                                  uint16_t min_temp_y,
                                                  uint16_t max_temp_x,
                                                  uint16_t max_temp_y);
+static uint8_t app_threadx_thermal_ai_prepare_io(void);
+static void app_threadx_thermal_ai_run_inference(const uint16_t *temp14_frame, uint32_t frame_counter);
+static uint8_t app_threadx_thermal_ai_load_reference_input(uint16_t *background_temp14_ptr,
+                                                           uint16_t *max_temp14_ptr);
+static uint8_t app_threadx_thermal_ai_probe_weight_signature(void);
+static uint16_t app_threadx_thermal_ai_percentile_from_histogram(uint32_t pixel_count);
+static void app_threadx_thermal_ai_build_input(const uint16_t *temp14_frame,
+                                               uint16_t *background_temp14_ptr,
+                                               uint16_t *max_temp14_ptr);
+static int8_t app_threadx_thermal_ai_read_output_q7(uint32_t grid_y,
+                                                    uint32_t grid_x,
+                                                    uint32_t channel_index,
+                                                    uint8_t channel_planar_layout);
+static uint32_t app_threadx_thermal_ai_collect_candidates(float output_scale,
+                                                          int16_t output_zero_point,
+                                                          uint8_t channel_planar_layout,
+                                                          uint32_t *raw_candidate_count_ptr,
+                                                          uint16_t *max_score_permille_ptr,
+                                                          uint16_t *max_objectness_permille_ptr);
+static void app_threadx_thermal_ai_decode_output(thermal_ai_result_t *result_ptr);
+static float app_threadx_thermal_ai_sigmoid(float value);
+static float app_threadx_thermal_ai_candidate_iou(const app_threadx_ai_candidate_t *lhs_ptr,
+                                                  const app_threadx_ai_candidate_t *rhs_ptr);
+static uint8_t app_threadx_thermal_ai_person_filter(const app_threadx_ai_candidate_t *candidate_ptr);
+static uint8_t app_threadx_thermal_ai_class_index_to_runtime_id(uint32_t class_index);
+static lv_color_t app_threadx_thermal_ai_color_for_class(uint8_t class_id);
+static void app_threadx_dcache_clean_by_addr(void *buffer_addr, uint32_t buffer_size);
+static void app_threadx_dcache_invalidate_by_addr(void *buffer_addr, uint32_t buffer_size);
+static void app_threadx_gui_init_ai_overlays(void);
+static void app_threadx_gui_init_ai_overlay_set(lv_obj_t *parent_img,
+                                                lv_obj_t **box_array,
+                                                lv_obj_t **label_array);
+static void app_threadx_gui_update_ai_overlay_set(lv_obj_t **box_array,
+                                                  lv_obj_t **label_array,
+                                                  uint16_t preview_width,
+                                                  uint16_t preview_height,
+                                                  const thermal_ai_result_t *result_ptr);
 static void app_threadx_gui_build_fullscreen_frame(const uint16_t *source_frame,
                                                    uint16_t *dest_frame,
                                                    uint16_t source_width,
@@ -246,6 +382,14 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   {
     return ret;
   }
+
+  ret = tx_mutex_create(&g_thermal_ai_mutex, "thermal_ai_mutex", TX_NO_INHERIT);
+  if (ret != TX_SUCCESS)
+  {
+    return ret;
+  }
+
+  thermal_ai_runtime_init(&g_thermal_ai_runtime, 2U, 3000);
 
   ret = tx_thread_create(&g_thermal_thread,
                          "thermal_thread",
@@ -509,6 +653,44 @@ static int32_t app_threadx_float_to_centi_celsius(float temp_c)
 }
 
 /**
+  * @brief  Read one temp14 sample in the current preview/UART orientation.
+  * @param  temp14_frame Pointer to the raw temp14 frame.
+  * @param  frame_width Raw frame width.
+  * @param  frame_height Raw frame height.
+  * @param  preview_x X coordinate in preview-oriented space.
+  * @param  preview_y Y coordinate in preview-oriented space.
+  * @retval uint16_t Preview-oriented temp14 sample.
+  */
+static uint16_t app_threadx_temp14_get_preview_oriented_sample(const uint16_t *temp14_frame,
+                                                               uint16_t frame_width,
+                                                               uint16_t frame_height,
+                                                               uint16_t preview_x,
+                                                               uint16_t preview_y)
+{
+  uint16_t source_x = preview_x;
+  uint16_t source_y = preview_y;
+
+  if ((temp14_frame == NULL) || (frame_width == 0U) || (frame_height == 0U))
+  {
+    return 0U;
+  }
+
+  if (source_x >= frame_width)
+  {
+    source_x = (uint16_t)(frame_width - 1U);
+  }
+
+  if (source_y >= frame_height)
+  {
+    source_y = (uint16_t)(frame_height - 1U);
+  }
+
+  /* Mirror/flip is self-inverse, so the same transform maps preview coords back to raw source coords. */
+  tiny1c_thermal_app_transform_frame_point(source_x, source_y, &source_x, &source_y);
+  return temp14_frame[((uint32_t)source_y * (uint32_t)frame_width) + (uint32_t)source_x];
+}
+
+/**
   * @brief  Build the center point using Tiny1-C 1-based coordinates.
   * @param  frame_width Frame width in pixels.
   * @param  frame_height Frame height in pixels.
@@ -667,6 +849,187 @@ static void app_threadx_gui_format_battery_text(char *buffer, uint32_t buffer_si
 }
 
 /**
+  * @brief  Format one short AI diagnostic string for the top status badge.
+  * @param  buffer Output buffer pointer.
+  * @param  buffer_size Output buffer size.
+  * @retval None
+  */
+static void app_threadx_gui_format_ai_status_text(char *buffer, uint32_t buffer_size)
+{
+  const char *iac_name;
+  uint32_t inference_ms;
+  thermal_ai_result_t ai_result_snapshot;
+  uint8_t ai_result_valid = 0U;
+  uint16_t max_objectness_permille = 0U;
+  uint8_t output_byte0 = 0U;
+  char weight_char = 'X';
+  char layout_char = 'I';
+
+  if ((buffer == NULL) || (buffer_size == 0U))
+  {
+    return;
+  }
+
+  if (CFG_THERMAL_AI_ENABLE == 0U)
+  {
+    (void)snprintf(buffer, buffer_size, "AI OFF");
+    return;
+  }
+
+  if (g_thermal_ai_iac_fault_latched != 0U)
+  {
+    switch (g_thermal_ai_iac_last_periph_id)
+    {
+      case RIF_RISC_PERIPH_INDEX_NPU:
+        iac_name = "NPU";
+        break;
+
+      case RIF_RISC_PERIPH_INDEX_XSPI2:
+        iac_name = "X2";
+        break;
+
+      case RIF_RISC_PERIPH_INDEX_XSPIM:
+        iac_name = "XM";
+        break;
+
+      default:
+        iac_name = "UNK";
+        break;
+    }
+
+    (void)snprintf(buffer, buffer_size, "IAC %s %lu",
+                   iac_name,
+                   (unsigned long)g_thermal_ai_iac_fault_count);
+    return;
+  }
+
+  switch (g_thermal_ai_diag_stage)
+  {
+    case 1U:
+      (void)snprintf(buffer, buffer_size, "AI GO %lu", (unsigned long)g_thermal_ai_diag_run_count);
+      return;
+
+    case 2U:
+      (void)snprintf(buffer, buffer_size, "AI ION");
+      return;
+
+    case 3U:
+      (void)snprintf(buffer, buffer_size, "AI IOB");
+      return;
+
+    case 4U:
+      (void)snprintf(buffer, buffer_size, "AI IOL");
+      return;
+
+    case 5U:
+      (void)snprintf(buffer, buffer_size, "AI ORI");
+      return;
+
+    case 6U:
+      (void)snprintf(buffer, buffer_size, "AI BG");
+      return;
+
+    case 7U:
+      (void)snprintf(buffer, buffer_size, "AI TST");
+      return;
+
+    case 8U:
+      (void)snprintf(buffer, buffer_size, "AI QTZ");
+      return;
+
+    case 9U:
+      (void)snprintf(buffer, buffer_size, "AI CLN");
+      return;
+
+    case 10U:
+      (void)snprintf(buffer, buffer_size, "AI RUN %lu", (unsigned long)g_thermal_ai_diag_run_count);
+      return;
+
+    case 11U:
+      (void)snprintf(buffer, buffer_size, "AI RET %lu", (unsigned long)g_thermal_ai_diag_run_count);
+      return;
+
+    case 12U:
+      (void)snprintf(buffer, buffer_size, "AI DEC %lu", (unsigned long)g_thermal_ai_diag_run_count);
+      return;
+
+    default:
+      break;
+  }
+
+  if (g_thermal_ai_model_ready == 0U)
+  {
+    (void)snprintf(buffer, buffer_size, "AI ARM");
+    return;
+  }
+
+  inference_ms = g_thermal_ai_last_inference_ms;
+  if (tx_mutex_get(&g_thermal_ai_mutex, TX_NO_WAIT) == TX_SUCCESS)
+  {
+    ai_result_snapshot = g_thermal_ai_runtime.last_result;
+    ai_result_valid = 1U;
+    max_objectness_permille = g_thermal_ai_diag_max_objectness_permille;
+    output_byte0 = g_thermal_ai_diag_output_byte0;
+    weight_char = (g_thermal_ai_diag_weights_ok != 0U) ? 'W' : 'X';
+    layout_char = (g_thermal_ai_diag_output_layout != 0U) ? 'P' : 'I';
+    tx_mutex_put(&g_thermal_ai_mutex);
+  }
+
+  if ((ai_result_valid != 0U) &&
+      (ai_result_snapshot.detection_count != 0U) &&
+      (ai_result_snapshot.detections[0].valid != 0U))
+  {
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "AI%c%c D%u %u",
+                   weight_char,
+                   layout_char,
+                   (unsigned int)ai_result_snapshot.detection_count,
+                   (unsigned int)((ai_result_snapshot.detections[0].confidence_permille + 5U) / 10U));
+    return;
+  }
+
+  (void)snprintf(buffer,
+                 buffer_size,
+                 "AI%c%c %u %02X",
+                 weight_char,
+                 layout_char,
+                 (unsigned int)((max_objectness_permille + 5U) / 10U),
+                 (unsigned int)output_byte0);
+}
+
+/**
+  * @brief  Update the AI diagnostic stage and optionally yield once so GUI can paint it.
+  * @param  stage New stage code.
+  * @param  allow_settle Non-zero to sleep briefly on the first AI attempt only.
+  * @retval None
+  */
+static void app_threadx_thermal_ai_set_diag_stage(uint8_t stage, uint8_t allow_settle)
+{
+  g_thermal_ai_diag_stage = stage;
+
+  if ((allow_settle != 0U) && (g_thermal_ai_diag_run_count == 1U))
+  {
+    tx_thread_sleep((CFG_THERMAL_AI_DIAG_STAGE_SETTLE_TICKS > 0U) ? CFG_THERMAL_AI_DIAG_STAGE_SETTLE_TICKS : 1U);
+  }
+}
+
+/**
+  * @brief  Capture one IAC illegal-access event raised by RIF.
+  * @param  PeriphId RIF peripheral identifier that triggered the fault.
+  * @retval None
+  */
+void HAL_RIF_ILA_Callback(uint32_t PeriphId)
+{
+  g_thermal_ai_iac_last_periph_id = PeriphId;
+  g_thermal_ai_iac_fault_count++;
+  g_thermal_ai_iac_fault_latched = 1U;
+  g_thermal_ai_model_ready = 0U;
+
+  HAL_RIF_IAC_DisableIT(PeriphId);
+}
+
+/**
   * @brief  Refresh the preview panel from the latest thermal frame.
   * @param  ui UI context.
   * @retval None
@@ -674,6 +1037,7 @@ static void app_threadx_gui_format_battery_text(char *buffer, uint32_t buffer_si
 static void app_threadx_gui_update_preview(lv_ui *ui)
 {
   const uint16_t *temp14_frame;
+  thermal_ai_result_t ai_result_snapshot;
   uint8_t mirror_enable;
   uint8_t flip_enable;
   uint16_t frame_width;
@@ -690,6 +1054,7 @@ static void app_threadx_gui_update_preview(lv_ui *ui)
   int32_t center_temp_centi_c;
   uint8_t unit_celsius;
   uint8_t extrema_cache_valid;
+  uint8_t ai_result_valid = 0U;
 
   if (ui == NULL)
   {
@@ -792,6 +1157,31 @@ static void app_threadx_gui_update_preview(lv_ui *ui)
                                        min_temp_y,
                                        max_temp_x,
                                        max_temp_y);
+
+  if ((CFG_THERMAL_AI_ENABLE != 0U) &&
+      (tx_mutex_get(&g_thermal_ai_mutex, TX_NO_WAIT) == TX_SUCCESS))
+  {
+    if (g_thermal_ai_model_ready != 0U)
+    {
+      ai_result_snapshot = g_thermal_ai_runtime.last_result;
+      ai_result_valid = 1U;
+    }
+    tx_mutex_put(&g_thermal_ai_mutex);
+  }
+
+  if (CFG_THERMAL_AI_ENABLE != 0U)
+  {
+    app_threadx_gui_update_ai_overlay_set(g_thermal_ai_preview_boxes,
+                                          g_thermal_ai_preview_labels,
+                                          tiny1c_thermal_app_get_preview_width(),
+                                          tiny1c_thermal_app_get_preview_height(),
+                                          (ai_result_valid != 0U) ? &ai_result_snapshot : NULL);
+    app_threadx_gui_update_ai_overlay_set(g_thermal_ai_fullscreen_boxes,
+                                          g_thermal_ai_fullscreen_labels,
+                                          CFG_GUI_FULLSCREEN_WIDTH,
+                                          CFG_GUI_FULLSCREEN_HEIGHT,
+                                          (ai_result_valid != 0U) ? &ai_result_snapshot : NULL);
+  }
 }
 
 /**
@@ -993,12 +1383,1015 @@ static void app_threadx_gui_build_fullscreen_frame(const uint16_t *source_frame,
 }
 
 /**
+  * @brief  Return whether the compiled thermal network buffers are ready for inference.
+  * @retval uint8_t 1 when input/output buffers are ready, otherwise 0.
+  */
+static uint8_t app_threadx_thermal_ai_prepare_io(void)
+{
+  if ((g_thermal_ai_input_buffer != NULL) && (g_thermal_ai_output_buffer != NULL))
+  {
+    return 1U;
+  }
+
+  g_thermal_ai_input_info = LL_ATON_Input_Buffers_Info_thermal();
+  g_thermal_ai_output_info = LL_ATON_Output_Buffers_Info_thermal();
+  if ((g_thermal_ai_input_info == NULL) || (g_thermal_ai_output_info == NULL))
+  {
+    app_threadx_thermal_ai_set_diag_stage(2U, 1U);
+    return 0U;
+  }
+
+  g_thermal_ai_input_buffer = (int8_t *)(void *)LL_Buffer_addr_start(&g_thermal_ai_input_info[0]);
+  g_thermal_ai_output_buffer = (int8_t *)(void *)LL_Buffer_addr_start(&g_thermal_ai_output_info[0]);
+  if ((g_thermal_ai_input_buffer == NULL) || (g_thermal_ai_output_buffer == NULL))
+  {
+    app_threadx_thermal_ai_set_diag_stage(3U, 1U);
+    return 0U;
+  }
+
+  if ((LL_Buffer_len(&g_thermal_ai_input_info[0]) != CFG_THERMAL_AI_INPUT_PIXELS) ||
+      (LL_Buffer_len(&g_thermal_ai_output_info[0]) != CFG_THERMAL_AI_OUTPUT_BYTES))
+  {
+    app_threadx_thermal_ai_set_diag_stage(4U, 1U);
+    g_thermal_ai_input_buffer = NULL;
+    g_thermal_ai_output_buffer = NULL;
+    return 0U;
+  }
+
+  return 1U;
+}
+
+/**
+  * @brief  Load one fixed reference int8 input tensor for board-side AI self-test.
+  * @param  background_temp14_ptr Optional output for background temp14 metadata.
+  * @param  max_temp14_ptr Optional output for max temp14 metadata.
+  * @retval uint8_t 1 when the reference tensor was copied, otherwise 0.
+  */
+static uint8_t app_threadx_thermal_ai_load_reference_input(uint16_t *background_temp14_ptr,
+                                                           uint16_t *max_temp14_ptr)
+{
+#if (CFG_THERMAL_AI_USE_REFERENCE_INPUT != 0U)
+  uint32_t reference_len;
+
+  if (g_thermal_ai_input_buffer == NULL)
+  {
+    return 0U;
+  }
+
+  reference_len = (uint32_t)(g_thermal_ai_reference_input_end - g_thermal_ai_reference_input);
+  if (reference_len != CFG_THERMAL_AI_INPUT_PIXELS)
+  {
+    return 0U;
+  }
+
+  (void)memcpy(g_thermal_ai_input_buffer, g_thermal_ai_reference_input, reference_len);
+  if (background_temp14_ptr != NULL)
+  {
+    *background_temp14_ptr = 0U;
+  }
+  if (max_temp14_ptr != NULL)
+  {
+    *max_temp14_ptr = 0U;
+  }
+  return 1U;
+#else
+  TX_PARAMETER_NOT_USED(background_temp14_ptr);
+  TX_PARAMETER_NOT_USED(max_temp14_ptr);
+  return 0U;
+#endif
+}
+
+/**
+  * @brief  Probe the first bytes of the external weight blob at 0x71000000.
+  * @retval uint8_t 1 when the signature matches the generated weight file header.
+  */
+static uint8_t app_threadx_thermal_ai_probe_weight_signature(void)
+{
+  volatile const uint8_t *weight_ptr = (volatile const uint8_t *)0x71000000UL;
+
+  if ((weight_ptr[0] == 0x11U) &&
+      (weight_ptr[1] == 0x02U) &&
+      (weight_ptr[2] == 0x21U) &&
+      (weight_ptr[3] == 0x0FU))
+  {
+    return 1U;
+  }
+
+  return 0U;
+}
+
+/**
+  * @brief  Return one percentile value from the current temp14 histogram.
+  * @param  pixel_count Total number of pixels accumulated in the histogram.
+  * @retval uint16_t Percentile temp14 value.
+  */
+static uint16_t app_threadx_thermal_ai_percentile_from_histogram(uint32_t pixel_count)
+{
+  uint32_t cumulative = 0U;
+  uint32_t rank;
+  uint32_t histogram_index;
+
+  if (pixel_count == 0U)
+  {
+    return 0U;
+  }
+
+  rank = ((pixel_count - 1U) * CFG_THERMAL_AI_BACKGROUND_PERCENT_NUM) / CFG_THERMAL_AI_BACKGROUND_PERCENT_DEN;
+  for (histogram_index = 0U; histogram_index < CFG_THERMAL_AI_HISTOGRAM_BINS; histogram_index++)
+  {
+    cumulative += (uint32_t)g_thermal_ai_histogram[histogram_index];
+    if (cumulative > rank)
+    {
+      return (uint16_t)histogram_index;
+    }
+  }
+
+  return (uint16_t)(CFG_THERMAL_AI_HISTOGRAM_BINS - 1U);
+}
+
+/**
+  * @brief  Build one preview-oriented AI input tensor from the latest raw temp14 frame.
+  * @param  temp14_frame Pointer to the latest raw temp14 frame.
+  * @param  background_temp14_ptr Output median/background temp14 pointer.
+  * @param  max_temp14_ptr Output frame maximum temp14 pointer.
+  * @retval None
+  */
+static void app_threadx_thermal_ai_build_input(const uint16_t *temp14_frame,
+                                               uint16_t *background_temp14_ptr,
+                                               uint16_t *max_temp14_ptr)
+{
+  uint32_t pixel_index = 0U;
+  uint16_t background_temp14;
+  uint16_t max_temp14 = 0U;
+  float input_scale;
+  int16_t input_zero_point;
+  uint32_t y_out;
+  uint32_t x_out;
+  volatile int8_t input_probe;
+
+  if ((temp14_frame == NULL) || (g_thermal_ai_input_buffer == NULL))
+  {
+    return;
+  }
+
+  (void)memset(g_thermal_ai_histogram, 0, sizeof(g_thermal_ai_histogram));
+  app_threadx_thermal_ai_set_diag_stage(5U, 1U);
+
+  for (y_out = 0U; y_out < CFG_THERMAL_AI_INPUT_HEIGHT; y_out++)
+  {
+    for (x_out = 0U; x_out < CFG_THERMAL_AI_INPUT_WIDTH; x_out++)
+    {
+      uint16_t temp14_value = app_threadx_temp14_get_preview_oriented_sample(temp14_frame,
+                                                                              CFG_THERMAL_AI_INPUT_WIDTH,
+                                                                              CFG_THERMAL_AI_INPUT_HEIGHT,
+                                                                              (uint16_t)x_out,
+                                                                              (uint16_t)y_out);
+      uint16_t histogram_value = (temp14_value < (CFG_THERMAL_AI_HISTOGRAM_BINS - 1U))
+                                   ? temp14_value
+                                   : (uint16_t)(CFG_THERMAL_AI_HISTOGRAM_BINS - 1U);
+
+      g_thermal_ai_oriented_temp14[pixel_index++] = temp14_value;
+      g_thermal_ai_histogram[histogram_value]++;
+      if (temp14_value > max_temp14)
+      {
+        max_temp14 = temp14_value;
+      }
+    }
+  }
+
+  background_temp14 = app_threadx_thermal_ai_percentile_from_histogram(CFG_THERMAL_AI_INPUT_PIXELS);
+  input_scale = (g_thermal_ai_input_info[0].scale != NULL) ? g_thermal_ai_input_info[0].scale[0] : (1.0f / 255.0f);
+  input_zero_point = (g_thermal_ai_input_info[0].offset != NULL) ? g_thermal_ai_input_info[0].offset[0] : -128;
+  app_threadx_thermal_ai_set_diag_stage(6U, 1U);
+
+  /* Probe the first CPU access to the generated NPU input buffer explicitly. */
+  app_threadx_thermal_ai_set_diag_stage(7U, 1U);
+  input_probe = g_thermal_ai_input_buffer[0];
+  g_thermal_ai_input_buffer[0] = input_probe;
+  app_threadx_thermal_ai_set_diag_stage(8U, 1U);
+
+  for (pixel_index = 0U; pixel_index < CFG_THERMAL_AI_INPUT_PIXELS; pixel_index++)
+  {
+    float delta_temp14 = (float)((int32_t)g_thermal_ai_oriented_temp14[pixel_index] - (int32_t)background_temp14);
+    float normalized = (delta_temp14 - CFG_THERMAL_AI_DELTA_TEMP14_MIN) / CFG_THERMAL_AI_DELTA_TEMP14_SPAN;
+    float quantized;
+    int32_t quantized_i32;
+
+    if (normalized < 0.0f)
+    {
+      normalized = 0.0f;
+    }
+    else if (normalized > 1.0f)
+    {
+      normalized = 1.0f;
+    }
+
+    quantized = (normalized / input_scale) + (float)input_zero_point;
+    quantized_i32 = (int32_t)lrintf(quantized);
+    if (quantized_i32 < -128)
+    {
+      quantized_i32 = -128;
+    }
+    else if (quantized_i32 > 127)
+    {
+      quantized_i32 = 127;
+    }
+
+    g_thermal_ai_input_buffer[pixel_index] = (int8_t)quantized_i32;
+  }
+
+  if (background_temp14_ptr != NULL)
+  {
+    *background_temp14_ptr = background_temp14;
+  }
+  if (max_temp14_ptr != NULL)
+  {
+    *max_temp14_ptr = max_temp14;
+  }
+}
+
+/**
+  * @brief  Return the sigmoid activation for one floating-point value.
+  * @param  value Input value.
+  * @retval float Sigmoid output in range 0..1.
+  */
+static float app_threadx_thermal_ai_sigmoid(float value)
+{
+  if (value >= 0.0f)
+  {
+    float exp_neg = expf(-value);
+    return 1.0f / (1.0f + exp_neg);
+  }
+
+  {
+    float exp_pos = expf(value);
+    return exp_pos / (1.0f + exp_pos);
+  }
+}
+
+/**
+  * @brief  Map one detector class index into the project runtime class identifier.
+  * @param  class_index Zero-based detector class index.
+  * @retval uint8_t Thermal AI runtime class identifier.
+  */
+static uint8_t app_threadx_thermal_ai_class_index_to_runtime_id(uint32_t class_index)
+{
+  switch (class_index)
+  {
+    case 0U:
+      return (uint8_t)THERMAL_AI_CLASS_PERSON;
+    case 1U:
+      return (uint8_t)THERMAL_AI_CLASS_CIRCUIT_BOARD_NORMAL;
+    case 2U:
+      return (uint8_t)THERMAL_AI_CLASS_CIRCUIT_BOARD_ABNORMAL_HOTSPOT;
+    default:
+      return (uint8_t)THERMAL_AI_CLASS_NONE;
+  }
+}
+
+/**
+  * @brief  Read one quantized detector output value using one candidate output layout.
+  * @param  grid_y Grid Y index.
+  * @param  grid_x Grid X index.
+  * @param  channel_index Output-channel index.
+  * @param  channel_planar_layout Non-zero for channel-major planar layout.
+  * @retval int8_t Raw quantized output value.
+  */
+static int8_t app_threadx_thermal_ai_read_output_q7(uint32_t grid_y,
+                                                    uint32_t grid_x,
+                                                    uint32_t channel_index,
+                                                    uint8_t channel_planar_layout)
+{
+  uint32_t linear_index;
+
+  if (channel_planar_layout != 0U)
+  {
+    linear_index = (channel_index * CFG_THERMAL_AI_GRID_HEIGHT * CFG_THERMAL_AI_GRID_WIDTH) +
+                   (grid_y * CFG_THERMAL_AI_GRID_WIDTH) +
+                   grid_x;
+  }
+  else
+  {
+    linear_index = ((grid_y * CFG_THERMAL_AI_GRID_WIDTH) + grid_x) * CFG_THERMAL_AI_OUTPUT_CHANNELS +
+                   channel_index;
+  }
+
+  return g_thermal_ai_output_buffer[linear_index];
+}
+
+/**
+  * @brief  Decode one candidate output layout into the temporary candidate list.
+  * @param  output_scale Output tensor dequant scale.
+  * @param  output_zero_point Output tensor dequant zero point.
+  * @param  channel_planar_layout Non-zero for channel-major planar layout.
+  * @param  raw_candidate_count_ptr Output pointer for pre-filter candidate count.
+  * @param  max_score_permille_ptr Output pointer for best detection score in permille.
+  * @param  max_objectness_permille_ptr Output pointer for best objectness score in permille.
+  * @retval uint32_t Candidate count kept after class thresholding and geometric filtering.
+  */
+static uint32_t app_threadx_thermal_ai_collect_candidates(float output_scale,
+                                                          int16_t output_zero_point,
+                                                          uint8_t channel_planar_layout,
+                                                          uint32_t *raw_candidate_count_ptr,
+                                                          uint16_t *max_score_permille_ptr,
+                                                          uint16_t *max_objectness_permille_ptr)
+{
+  float stride_x = (float)CFG_THERMAL_AI_INPUT_WIDTH / (float)CFG_THERMAL_AI_GRID_WIDTH;
+  float stride_y = (float)CFG_THERMAL_AI_INPUT_HEIGHT / (float)CFG_THERMAL_AI_GRID_HEIGHT;
+  uint32_t grid_y;
+  uint32_t grid_x;
+  uint32_t raw_candidate_count = 0U;
+  uint32_t candidate_count = 0U;
+  uint16_t max_score_permille = 0U;
+  uint16_t max_objectness_permille = 0U;
+
+  for (grid_y = 0U; grid_y < CFG_THERMAL_AI_GRID_HEIGHT; grid_y++)
+  {
+    for (grid_x = 0U; grid_x < CFG_THERMAL_AI_GRID_WIDTH; grid_x++)
+    {
+      float logits[CFG_THERMAL_AI_OUTPUT_CHANNELS];
+      float objectness_score;
+      float class_scores[3];
+      uint32_t class_index = 0U;
+      float class_score;
+      float detection_score;
+      float offset_x;
+      float offset_y;
+      float width_norm;
+      float height_norm;
+      float center_x;
+      float center_y;
+      float box_width;
+      float box_height;
+      app_threadx_ai_candidate_t *candidate_ptr;
+      uint32_t channel_index;
+
+      for (channel_index = 0U; channel_index < CFG_THERMAL_AI_OUTPUT_CHANNELS; channel_index++)
+      {
+        logits[channel_index] =
+            ((float)((int32_t)app_threadx_thermal_ai_read_output_q7(grid_y,
+                                                                    grid_x,
+                                                                    channel_index,
+                                                                    channel_planar_layout) -
+                     (int32_t)output_zero_point)) *
+            output_scale;
+      }
+
+      objectness_score = app_threadx_thermal_ai_sigmoid(logits[0]);
+      if ((uint16_t)(objectness_score * 1000.0f + 0.5f) > max_objectness_permille)
+      {
+        max_objectness_permille = (uint16_t)(objectness_score * 1000.0f + 0.5f);
+      }
+      if (objectness_score < CFG_THERMAL_AI_OBJECTNESS_THRESHOLD)
+      {
+        continue;
+      }
+
+      class_scores[0] = app_threadx_thermal_ai_sigmoid(logits[5]);
+      class_scores[1] = app_threadx_thermal_ai_sigmoid(logits[6]);
+      class_scores[2] = app_threadx_thermal_ai_sigmoid(logits[7]);
+
+      if (class_scores[1] > class_scores[class_index])
+      {
+        class_index = 1U;
+      }
+      if (class_scores[2] > class_scores[class_index])
+      {
+        class_index = 2U;
+      }
+
+      class_score = class_scores[class_index];
+      detection_score = objectness_score * class_score;
+      if ((uint16_t)(detection_score * 1000.0f + 0.5f) > max_score_permille)
+      {
+        max_score_permille = (uint16_t)(detection_score * 1000.0f + 0.5f);
+      }
+      if ((class_score < CFG_THERMAL_AI_CLASS_THRESHOLD) || (detection_score < CFG_THERMAL_AI_SCORE_THRESHOLD))
+      {
+        continue;
+      }
+
+      raw_candidate_count++;
+
+      if (candidate_count >= CFG_THERMAL_AI_MAX_CANDIDATES)
+      {
+        continue;
+      }
+
+      offset_x = app_threadx_thermal_ai_sigmoid(logits[1]);
+      offset_y = app_threadx_thermal_ai_sigmoid(logits[2]);
+      width_norm = app_threadx_thermal_ai_sigmoid(logits[3]);
+      height_norm = app_threadx_thermal_ai_sigmoid(logits[4]);
+      center_x = ((float)grid_x + offset_x) * stride_x;
+      center_y = ((float)grid_y + offset_y) * stride_y;
+      box_width = width_norm * (float)CFG_THERMAL_AI_INPUT_WIDTH;
+      box_height = height_norm * (float)CFG_THERMAL_AI_INPUT_HEIGHT;
+      if (box_width < 1.0f)
+      {
+        box_width = 1.0f;
+      }
+      if (box_height < 1.0f)
+      {
+        box_height = 1.0f;
+      }
+
+      candidate_ptr = &g_thermal_ai_candidates[candidate_count++];
+      candidate_ptr->class_id = app_threadx_thermal_ai_class_index_to_runtime_id(class_index);
+      candidate_ptr->score = detection_score;
+      candidate_ptr->confidence_permille = (uint16_t)(detection_score * 1000.0f + 0.5f);
+      candidate_ptr->x_min = center_x - (box_width * 0.5f);
+      candidate_ptr->y_min = center_y - (box_height * 0.5f);
+      candidate_ptr->x_max = center_x + (box_width * 0.5f);
+      candidate_ptr->y_max = center_y + (box_height * 0.5f);
+
+      if (candidate_ptr->x_min < 0.0f)
+      {
+        candidate_ptr->x_min = 0.0f;
+      }
+      if (candidate_ptr->y_min < 0.0f)
+      {
+        candidate_ptr->y_min = 0.0f;
+      }
+      if (candidate_ptr->x_max > (float)CFG_THERMAL_AI_INPUT_WIDTH)
+      {
+        candidate_ptr->x_max = (float)CFG_THERMAL_AI_INPUT_WIDTH;
+      }
+      if (candidate_ptr->y_max > (float)CFG_THERMAL_AI_INPUT_HEIGHT)
+      {
+        candidate_ptr->y_max = (float)CFG_THERMAL_AI_INPUT_HEIGHT;
+      }
+
+      if ((candidate_ptr->class_id == (uint8_t)THERMAL_AI_CLASS_PERSON) &&
+          (app_threadx_thermal_ai_person_filter(candidate_ptr) == 0U))
+      {
+        candidate_count--;
+      }
+    }
+  }
+
+  if (raw_candidate_count_ptr != NULL)
+  {
+    *raw_candidate_count_ptr = raw_candidate_count;
+  }
+  if (max_score_permille_ptr != NULL)
+  {
+    *max_score_permille_ptr = max_score_permille;
+  }
+  if (max_objectness_permille_ptr != NULL)
+  {
+    *max_objectness_permille_ptr = max_objectness_permille;
+  }
+
+  return candidate_count;
+}
+
+/**
+  * @brief  Apply the board-side person-specific geometric false-positive filter.
+  * @param  candidate_ptr Candidate detection to test.
+  * @retval uint8_t 1 when the candidate passes, otherwise 0.
+  */
+static uint8_t app_threadx_thermal_ai_person_filter(const app_threadx_ai_candidate_t *candidate_ptr)
+{
+  float width;
+  float height;
+  uint8_t touches_top;
+  uint8_t touches_left;
+  uint8_t touches_right;
+
+  if (candidate_ptr == NULL)
+  {
+    return 0U;
+  }
+
+  width = candidate_ptr->x_max - candidate_ptr->x_min;
+  height = candidate_ptr->y_max - candidate_ptr->y_min;
+  if ((width < CFG_THERMAL_AI_PERSON_MIN_WIDTH_PX) || (height < CFG_THERMAL_AI_PERSON_MIN_HEIGHT_PX))
+  {
+    return 0U;
+  }
+
+  touches_top = (candidate_ptr->y_min <= CFG_THERMAL_AI_PERSON_TOP_MARGIN_PX) ? 1U : 0U;
+  touches_left = (candidate_ptr->x_min <= CFG_THERMAL_AI_PERSON_SIDE_MARGIN_PX) ? 1U : 0U;
+  touches_right = (candidate_ptr->x_max >= ((float)CFG_THERMAL_AI_INPUT_WIDTH - CFG_THERMAL_AI_PERSON_SIDE_MARGIN_PX)) ? 1U : 0U;
+
+  if (touches_top != 0U)
+  {
+    return 0U;
+  }
+  if ((touches_left != 0U) || (touches_right != 0U))
+  {
+    return 0U;
+  }
+  if ((touches_top != 0U) && (height <= CFG_THERMAL_AI_PERSON_TOP_BAND_MAX_H))
+  {
+    return 0U;
+  }
+  if ((touches_top != 0U) && (touches_left != 0U) &&
+      (width <= CFG_THERMAL_AI_PERSON_CORNER_MAX_W) && (height <= CFG_THERMAL_AI_PERSON_CORNER_MAX_H))
+  {
+    return 0U;
+  }
+  if ((touches_top != 0U) && (touches_right != 0U) &&
+      (width <= CFG_THERMAL_AI_PERSON_CORNER_MAX_W) && (height <= CFG_THERMAL_AI_PERSON_CORNER_MAX_H))
+  {
+    return 0U;
+  }
+  if ((touches_left != 0U) && (width <= CFG_THERMAL_AI_PERSON_EDGE_STRIP_MAX_W) &&
+      (height >= CFG_THERMAL_AI_PERSON_EDGE_STRIP_MIN_H))
+  {
+    return 0U;
+  }
+  if ((touches_right != 0U) && (width <= CFG_THERMAL_AI_PERSON_EDGE_STRIP_MAX_W) &&
+      (height >= CFG_THERMAL_AI_PERSON_EDGE_STRIP_MIN_H))
+  {
+    return 0U;
+  }
+
+  return 1U;
+}
+
+/**
+  * @brief  Compute the IoU between two decoded AI candidates.
+  * @param  lhs_ptr First candidate.
+  * @param  rhs_ptr Second candidate.
+  * @retval float Intersection-over-union ratio.
+  */
+static float app_threadx_thermal_ai_candidate_iou(const app_threadx_ai_candidate_t *lhs_ptr,
+                                                  const app_threadx_ai_candidate_t *rhs_ptr)
+{
+  float inter_x_min;
+  float inter_y_min;
+  float inter_x_max;
+  float inter_y_max;
+  float inter_w;
+  float inter_h;
+  float inter_area;
+  float lhs_area;
+  float rhs_area;
+  float union_area;
+
+  if ((lhs_ptr == NULL) || (rhs_ptr == NULL))
+  {
+    return 0.0f;
+  }
+
+  inter_x_min = (lhs_ptr->x_min > rhs_ptr->x_min) ? lhs_ptr->x_min : rhs_ptr->x_min;
+  inter_y_min = (lhs_ptr->y_min > rhs_ptr->y_min) ? lhs_ptr->y_min : rhs_ptr->y_min;
+  inter_x_max = (lhs_ptr->x_max < rhs_ptr->x_max) ? lhs_ptr->x_max : rhs_ptr->x_max;
+  inter_y_max = (lhs_ptr->y_max < rhs_ptr->y_max) ? lhs_ptr->y_max : rhs_ptr->y_max;
+  inter_w = inter_x_max - inter_x_min;
+  inter_h = inter_y_max - inter_y_min;
+  if ((inter_w <= 0.0f) || (inter_h <= 0.0f))
+  {
+    return 0.0f;
+  }
+
+  inter_area = inter_w * inter_h;
+  lhs_area = (lhs_ptr->x_max - lhs_ptr->x_min) * (lhs_ptr->y_max - lhs_ptr->y_min);
+  rhs_area = (rhs_ptr->x_max - rhs_ptr->x_min) * (rhs_ptr->y_max - rhs_ptr->y_min);
+  union_area = lhs_area + rhs_area - inter_area;
+  if (union_area <= 0.0f)
+  {
+    return 0.0f;
+  }
+
+  return inter_area / union_area;
+}
+
+/**
+  * @brief  Decode the current raw network output buffer into project detections.
+  * @param  result_ptr Output runtime result object.
+  * @retval None
+  */
+static void app_threadx_thermal_ai_decode_output(thermal_ai_result_t *result_ptr)
+{
+  float output_scale;
+  int16_t output_zero_point;
+  uint32_t grid_y;
+  uint32_t grid_x;
+  uint32_t candidate_count = 0U;
+  uint32_t kept_count = 0U;
+  uint32_t raw_candidate_count = 0U;
+  uint32_t fallback_raw_candidate_count = 0U;
+  uint32_t fallback_candidate_count = 0U;
+  uint32_t class_loop_index;
+  uint8_t candidate_used[CFG_THERMAL_AI_MAX_CANDIDATES];
+  uint16_t max_score_permille = 0U;
+  uint16_t fallback_max_score_permille = 0U;
+  uint16_t max_objectness_permille = 0U;
+  uint16_t fallback_max_objectness_permille = 0U;
+  static const uint8_t class_order[] = {
+    (uint8_t)THERMAL_AI_CLASS_PERSON,
+    (uint8_t)THERMAL_AI_CLASS_CIRCUIT_BOARD_NORMAL,
+    (uint8_t)THERMAL_AI_CLASS_CIRCUIT_BOARD_ABNORMAL_HOTSPOT
+  };
+
+  if ((result_ptr == NULL) || (g_thermal_ai_output_buffer == NULL))
+  {
+    return;
+  }
+
+  output_scale = (g_thermal_ai_output_info[0].scale != NULL) ? g_thermal_ai_output_info[0].scale[0] : 1.0f;
+  output_zero_point = (g_thermal_ai_output_info[0].offset != NULL) ? g_thermal_ai_output_info[0].offset[0] : 0;
+  candidate_count = app_threadx_thermal_ai_collect_candidates(output_scale,
+                                                              output_zero_point,
+                                                              0U,
+                                                              &raw_candidate_count,
+                                                              &max_score_permille,
+                                                              &max_objectness_permille);
+  g_thermal_ai_diag_output_layout = 0U;
+  if (candidate_count == 0U)
+  {
+    fallback_candidate_count = app_threadx_thermal_ai_collect_candidates(output_scale,
+                                                                         output_zero_point,
+                                                                         1U,
+                                                                         &fallback_raw_candidate_count,
+                                                                         &fallback_max_score_permille,
+                                                                         &fallback_max_objectness_permille);
+    if ((fallback_candidate_count > 0U) ||
+        (fallback_raw_candidate_count > raw_candidate_count) ||
+        (fallback_max_score_permille > max_score_permille) ||
+        (fallback_max_objectness_permille > max_objectness_permille))
+    {
+      candidate_count = fallback_candidate_count;
+      raw_candidate_count = fallback_raw_candidate_count;
+      max_score_permille = fallback_max_score_permille;
+      max_objectness_permille = fallback_max_objectness_permille;
+      g_thermal_ai_diag_output_layout = 1U;
+    }
+    else
+    {
+      candidate_count = app_threadx_thermal_ai_collect_candidates(output_scale,
+                                                                  output_zero_point,
+                                                                  0U,
+                                                                  &raw_candidate_count,
+                                                                  &max_score_permille,
+                                                                  &max_objectness_permille);
+    }
+  }
+
+  (void)memset(candidate_used, 0, sizeof(candidate_used));
+  for (class_loop_index = 0U; class_loop_index < (sizeof(class_order) / sizeof(class_order[0])); class_loop_index++)
+  {
+    uint8_t target_class_id = class_order[class_loop_index];
+
+    for (;;)
+    {
+      uint32_t best_index = CFG_THERMAL_AI_MAX_CANDIDATES;
+      float best_score = -1.0f;
+      uint32_t candidate_index;
+
+      for (candidate_index = 0U; candidate_index < candidate_count; candidate_index++)
+      {
+        if ((candidate_used[candidate_index] != 0U) ||
+            (g_thermal_ai_candidates[candidate_index].class_id != target_class_id))
+        {
+          continue;
+        }
+        if (g_thermal_ai_candidates[candidate_index].score > best_score)
+        {
+          best_score = g_thermal_ai_candidates[candidate_index].score;
+          best_index = candidate_index;
+        }
+      }
+
+      if (best_index >= candidate_count)
+      {
+        break;
+      }
+
+      g_thermal_ai_kept_candidates[kept_count++] = g_thermal_ai_candidates[best_index];
+      candidate_used[best_index] = 1U;
+      for (candidate_index = 0U; candidate_index < candidate_count; candidate_index++)
+      {
+        if ((candidate_used[candidate_index] == 0U) &&
+            (g_thermal_ai_candidates[candidate_index].class_id == target_class_id) &&
+            (app_threadx_thermal_ai_candidate_iou(&g_thermal_ai_candidates[best_index],
+                                                  &g_thermal_ai_candidates[candidate_index]) >= CFG_THERMAL_AI_NMS_IOU_THRESHOLD))
+        {
+          candidate_used[candidate_index] = 1U;
+        }
+      }
+    }
+  }
+
+  for (grid_y = 0U; grid_y < kept_count; grid_y++)
+  {
+    for (grid_x = grid_y + 1U; grid_x < kept_count; grid_x++)
+    {
+      if (g_thermal_ai_kept_candidates[grid_x].score > g_thermal_ai_kept_candidates[grid_y].score)
+      {
+        app_threadx_ai_candidate_t temp = g_thermal_ai_kept_candidates[grid_y];
+        g_thermal_ai_kept_candidates[grid_y] = g_thermal_ai_kept_candidates[grid_x];
+        g_thermal_ai_kept_candidates[grid_x] = temp;
+      }
+    }
+  }
+
+  if (kept_count > CFG_THERMAL_AI_MAX_DETECTIONS)
+  {
+    kept_count = CFG_THERMAL_AI_MAX_DETECTIONS;
+  }
+
+  result_ptr->detection_count = (uint8_t)kept_count;
+  for (grid_y = 0U; grid_y < CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS; grid_y++)
+  {
+    result_ptr->detections[grid_y].valid = 0U;
+  }
+
+  for (grid_y = 0U; grid_y < kept_count; grid_y++)
+  {
+    const app_threadx_ai_candidate_t *candidate_ptr = &g_thermal_ai_kept_candidates[grid_y];
+    thermal_ai_detection_t *detection_ptr = &result_ptr->detections[grid_y];
+
+    detection_ptr->valid = 1U;
+    detection_ptr->class_id = candidate_ptr->class_id;
+    detection_ptr->confidence_permille = candidate_ptr->confidence_permille;
+    detection_ptr->bbox.x_min = (uint16_t)(candidate_ptr->x_min + 0.5f);
+    detection_ptr->bbox.y_min = (uint16_t)(candidate_ptr->y_min + 0.5f);
+    detection_ptr->bbox.x_max = (uint16_t)(candidate_ptr->x_max + 0.5f);
+    detection_ptr->bbox.y_max = (uint16_t)(candidate_ptr->y_max + 0.5f);
+  }
+
+  g_thermal_ai_diag_raw_candidate_count = (uint16_t)raw_candidate_count;
+  g_thermal_ai_diag_postfilter_candidate_count = (uint16_t)candidate_count;
+  g_thermal_ai_diag_max_score_permille = max_score_permille;
+  g_thermal_ai_diag_max_objectness_permille = max_objectness_permille;
+}
+
+/**
+  * @brief  Clean one address range from D-Cache with 32-byte alignment.
+  * @param  buffer_addr Buffer start address.
+  * @param  buffer_size Buffer size in bytes.
+  * @retval None
+  */
+static void app_threadx_dcache_clean_by_addr(void *buffer_addr, uint32_t buffer_size)
+{
+  uintptr_t start_addr;
+  uintptr_t end_addr;
+
+  if ((buffer_addr == NULL) || (buffer_size == 0U))
+  {
+    return;
+  }
+
+  start_addr = ((uintptr_t)buffer_addr) & ~((uintptr_t)31U);
+  end_addr = (((uintptr_t)buffer_addr + (uintptr_t)buffer_size + (uintptr_t)31U) & ~((uintptr_t)31U));
+  SCB_CleanDCache_by_Addr((uint32_t *)start_addr, (int32_t)(end_addr - start_addr));
+}
+
+/**
+  * @brief  Invalidate one address range from D-Cache with 32-byte alignment.
+  * @param  buffer_addr Buffer start address.
+  * @param  buffer_size Buffer size in bytes.
+  * @retval None
+  */
+static void app_threadx_dcache_invalidate_by_addr(void *buffer_addr, uint32_t buffer_size)
+{
+  uintptr_t start_addr;
+  uintptr_t end_addr;
+
+  if ((buffer_addr == NULL) || (buffer_size == 0U))
+  {
+    return;
+  }
+
+  start_addr = ((uintptr_t)buffer_addr) & ~((uintptr_t)31U);
+  end_addr = (((uintptr_t)buffer_addr + (uintptr_t)buffer_size + (uintptr_t)31U) & ~((uintptr_t)31U));
+  SCB_InvalidateDCache_by_Addr((uint32_t *)start_addr, (int32_t)(end_addr - start_addr));
+}
+
+/**
+  * @brief  Execute one complete thermal AI inference on the latest temp14 frame.
+  * @param  temp14_frame Pointer to the latest raw temp14 frame.
+  * @param  frame_counter Current frame counter.
+  * @retval None
+  */
+static void app_threadx_thermal_ai_run_inference(const uint16_t *temp14_frame, uint32_t frame_counter)
+{
+  thermal_ai_result_t result;
+  uint16_t background_temp14 = 0U;
+  uint16_t max_temp14 = 0U;
+  ULONG tick_start;
+
+  if (CFG_THERMAL_AI_ENABLE == 0U)
+  {
+    return;
+  }
+
+  g_thermal_ai_diag_run_count++;
+  app_threadx_thermal_ai_set_diag_stage(1U, 1U);
+
+  if (g_thermal_ai_iac_fault_latched != 0U)
+  {
+    return;
+  }
+
+  if ((temp14_frame == NULL) || (app_threadx_thermal_ai_prepare_io() == 0U))
+  {
+    return;
+  }
+
+  g_thermal_ai_diag_weights_ok = app_threadx_thermal_ai_probe_weight_signature();
+  g_thermal_ai_diag_output_byte0 = 0U;
+  g_thermal_ai_diag_raw_candidate_count = 0U;
+  g_thermal_ai_diag_postfilter_candidate_count = 0U;
+  g_thermal_ai_diag_max_score_permille = 0U;
+  g_thermal_ai_diag_max_objectness_permille = 0U;
+  g_thermal_ai_diag_output_layout = 0U;
+
+  if (app_threadx_thermal_ai_load_reference_input(&background_temp14, &max_temp14) == 0U)
+  {
+    app_threadx_thermal_ai_build_input(temp14_frame, &background_temp14, &max_temp14);
+  }
+  app_threadx_thermal_ai_set_diag_stage(9U, 1U);
+  app_threadx_dcache_clean_by_addr(g_thermal_ai_input_buffer, LL_Buffer_len(&g_thermal_ai_input_info[0]));
+
+  app_threadx_thermal_ai_set_diag_stage(10U, 1U);
+
+  tick_start = HAL_GetTick();
+  LL_ATON_RT_Main(&NN_Instance_thermal);
+  g_thermal_ai_last_inference_ms = HAL_GetTick() - tick_start;
+
+  app_threadx_thermal_ai_set_diag_stage(11U, 0U);
+  app_threadx_dcache_invalidate_by_addr(g_thermal_ai_output_buffer, LL_Buffer_len(&g_thermal_ai_output_info[0]));
+  g_thermal_ai_diag_output_byte0 = (uint8_t)g_thermal_ai_output_buffer[0];
+  (void)memset(&result, 0, sizeof(result));
+  result.frame_counter = frame_counter;
+  result.max_temp_centi_c = (uint16_t)app_threadx_temp14_to_centi_celsius(max_temp14);
+  result.ambient_temp_centi_c = (uint16_t)app_threadx_temp14_to_centi_celsius(background_temp14);
+  app_threadx_thermal_ai_set_diag_stage(12U, 0U);
+  app_threadx_thermal_ai_decode_output(&result);
+
+  if (tx_mutex_get(&g_thermal_ai_mutex, TX_WAIT_FOREVER) == TX_SUCCESS)
+  {
+    thermal_ai_runtime_update(&g_thermal_ai_runtime, &result);
+    g_thermal_ai_model_ready = 1U;
+    g_thermal_ai_diag_stage = 0U;
+    tx_mutex_put(&g_thermal_ai_mutex);
+  }
+}
+
+/**
+  * @brief  Return one LVGL color for the requested AI class.
+  * @param  class_id Detection class identifier.
+  * @retval uint16_t RGB565-compatible LVGL color value.
+  */
+static lv_color_t app_threadx_thermal_ai_color_for_class(uint8_t class_id)
+{
+  switch ((thermal_ai_class_t)class_id)
+  {
+    case THERMAL_AI_CLASS_PERSON:
+      return lv_palette_main(LV_PALETTE_RED);
+    case THERMAL_AI_CLASS_CIRCUIT_BOARD_NORMAL:
+      return lv_palette_main(LV_PALETTE_BLUE);
+    case THERMAL_AI_CLASS_CIRCUIT_BOARD_ABNORMAL_HOTSPOT:
+      return lv_palette_main(LV_PALETTE_YELLOW);
+    default:
+      return lv_palette_main(LV_PALETTE_GREY);
+  }
+}
+
+/**
+  * @brief  Create runtime AI overlay rectangles on both preview images.
+  * @retval None
+  */
+static void app_threadx_gui_init_ai_overlays(void)
+{
+  if (g_thermal_ai_overlay_ready != 0U)
+  {
+    return;
+  }
+
+  app_threadx_gui_init_ai_overlay_set(guider_ui.WidgetsDemo_preview_img,
+                                      g_thermal_ai_preview_boxes,
+                                      g_thermal_ai_preview_labels);
+  app_threadx_gui_init_ai_overlay_set(guider_ui.WidgetsDemo_fullscreen_preview_img,
+                                      g_thermal_ai_fullscreen_boxes,
+                                      g_thermal_ai_fullscreen_labels);
+  g_thermal_ai_overlay_ready = 1U;
+}
+
+/**
+  * @brief  Create one set of AI overlay rectangles for one preview image.
+  * @param  parent_img Parent preview image object.
+  * @param  box_array Output box-object array.
+  * @param  label_array Output label-object array.
+  * @retval None
+  */
+static void app_threadx_gui_init_ai_overlay_set(lv_obj_t *parent_img,
+                                                lv_obj_t **box_array,
+                                                lv_obj_t **label_array)
+{
+  uint32_t detection_index;
+
+  if ((parent_img == NULL) || (box_array == NULL) || (label_array == NULL))
+  {
+    return;
+  }
+
+  for (detection_index = 0U; detection_index < CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS; detection_index++)
+  {
+    lv_obj_t *box = lv_obj_create(parent_img);
+    lv_obj_t *label = lv_label_create(box);
+
+    box_array[detection_index] = box;
+    label_array[detection_index] = label;
+
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_color(box, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_set_style_bg_opa(label, LV_OPA_60, 0);
+    lv_obj_set_style_bg_color(label, lv_color_black(), 0);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_label_set_text(label, "");
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+  }
+}
+
+/**
+  * @brief  Update one set of AI overlay rectangles from the latest decoded detections.
+  * @param  box_array Box-object array.
+  * @param  label_array Label-object array.
+  * @param  preview_width Target preview width in pixels.
+  * @param  preview_height Target preview height in pixels.
+  * @param  result_ptr Latest decoded AI result, may be NULL.
+  * @retval None
+  */
+static void app_threadx_gui_update_ai_overlay_set(lv_obj_t **box_array,
+                                                  lv_obj_t **label_array,
+                                                  uint16_t preview_width,
+                                                  uint16_t preview_height,
+                                                  const thermal_ai_result_t *result_ptr)
+{
+  uint32_t detection_index;
+
+  if ((box_array == NULL) || (label_array == NULL))
+  {
+    return;
+  }
+
+  for (detection_index = 0U; detection_index < CFG_THERMAL_AI_RUNTIME_MAX_DETECTIONS; detection_index++)
+  {
+    lv_obj_t *box = box_array[detection_index];
+    lv_obj_t *label = label_array[detection_index];
+
+    if ((box == NULL) || (label == NULL))
+    {
+      continue;
+    }
+
+    if ((result_ptr == NULL) ||
+        (detection_index >= result_ptr->detection_count) ||
+        (result_ptr->detections[detection_index].valid == 0U))
+    {
+      lv_obj_add_flag(box, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+
+    {
+      thermal_ai_bbox_t scaled_bbox;
+      const thermal_ai_detection_t *detection_ptr = &result_ptr->detections[detection_index];
+      char label_text[32];
+      lv_color_t border_color = app_threadx_thermal_ai_color_for_class(detection_ptr->class_id);
+
+      thermal_ai_runtime_scale_bbox(&detection_ptr->bbox,
+                                    CFG_THERMAL_AI_INPUT_WIDTH,
+                                    CFG_THERMAL_AI_INPUT_HEIGHT,
+                                    preview_width,
+                                    preview_height,
+                                    &scaled_bbox);
+      lv_obj_clear_flag(box, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_pos(box, scaled_bbox.x_min, scaled_bbox.y_min);
+      lv_obj_set_size(box,
+                      (lv_coord_t)((scaled_bbox.x_max > scaled_bbox.x_min) ? (scaled_bbox.x_max - scaled_bbox.x_min) : 1U),
+                      (lv_coord_t)((scaled_bbox.y_max > scaled_bbox.y_min) ? (scaled_bbox.y_max - scaled_bbox.y_min) : 1U));
+      lv_obj_set_style_border_color(box, border_color, 0);
+      (void)snprintf(label_text,
+                     sizeof(label_text),
+                     "%s %u%%",
+                     thermal_ai_runtime_get_class_name(detection_ptr->class_id),
+                     (unsigned int)((detection_ptr->confidence_permille + 5U) / 10U));
+      lv_label_set_text(label, label_text);
+      lv_obj_set_style_border_color(label, border_color, 0);
+    }
+  }
+}
+
+/**
   * @brief  Thermal rendering thread entry.
   * @param  thread_input Unused thread input parameter.
   * @retval None
   */
 static VOID app_threadx_thermal_thread_entry(ULONG thread_input)
 {
+  uint32_t ai_frame_counter_last = 0U;
+  ULONG ai_tick_last = 0U;
+
   TX_PARAMETER_NOT_USED(thread_input);
 
   while (tiny1c_thermal_app_start() != IR_SUCCESS)
@@ -1018,7 +2411,23 @@ static VOID app_threadx_thermal_thread_entry(ULONG thread_input)
 
   for (;;)
   {
+    uint32_t frame_counter_now;
+    const uint16_t *temp14_frame;
+
     tiny1c_thermal_app_process();
+    frame_counter_now = tiny1c_thermal_app_get_frame_counter();
+    if ((frame_counter_now != 0U) && (frame_counter_now != ai_frame_counter_last))
+    {
+      temp14_frame = tiny1c_thermal_app_get_temp14_frame();
+      if ((CFG_THERMAL_AI_ENABLE != 0U) &&
+          (temp14_frame != NULL) &&
+          ((HAL_GetTick() - ai_tick_last) >= CFG_THERMAL_AI_MIN_INTERVAL_MS))
+      {
+        app_threadx_thermal_ai_run_inference(temp14_frame, frame_counter_now);
+        ai_frame_counter_last = frame_counter_now;
+        ai_tick_last = HAL_GetTick();
+      }
+    }
     tx_thread_sleep(1U);
   }
 }
@@ -1164,12 +2573,17 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
   g_gui_fullscreen_img_dsc.data_size = CFG_GUI_FULLSCREEN_WIDTH * CFG_GUI_FULLSCREEN_HEIGHT * sizeof(uint16_t);
   g_gui_fullscreen_img_dsc.data = (const uint8_t *)g_gui_fullscreen_rgb565_frame;
   lv_img_set_src(guider_ui.WidgetsDemo_fullscreen_preview_img, &g_gui_fullscreen_img_dsc);
+  if (CFG_THERMAL_AI_ENABLE != 0U)
+  {
+    app_threadx_gui_init_ai_overlays();
+  }
 
   for (;;)
   {
     uint32_t frame_counter_now;
     char time_text[16];
     char battery_text[16];
+    char ai_text[24];
     uint32_t seconds;
 
     frame_counter_now = tiny1c_thermal_app_get_frame_counter();
@@ -1197,6 +2611,8 @@ static VOID app_threadx_gui_thread_entry(ULONG thread_input)
     app_threadx_gui_set_badge_text(guider_ui.WidgetsDemo_status_time, time_text);
     app_threadx_gui_format_battery_text(battery_text, sizeof(battery_text));
     app_threadx_gui_set_badge_text(guider_ui.WidgetsDemo_status_power, battery_text);
+    app_threadx_gui_format_ai_status_text(ai_text, sizeof(ai_text));
+    app_threadx_gui_set_badge_text(guider_ui.WidgetsDemo_status_uart, ai_text);
 
     lv_timer_handler();
     tx_thread_sleep(5U);
@@ -1720,8 +3136,6 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
   uint16_t min_temp14 = 0xFFFFU;
   uint16_t max_temp14 = 0U;
   uint16_t center_temp14;
-  uint8_t mirror_enable;
-  uint8_t flip_enable;
 
   if ((tx_buffer == NULL) || (temp14_frame == NULL))
   {
@@ -1730,8 +3144,6 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
 
   header_ptr = (app_threadx_uart_stream_header_t *)tx_buffer;
   payload_ptr = (uint16_t *)(void *)(tx_buffer + sizeof(app_threadx_uart_stream_header_t));
-  mirror_enable = tiny1c_thermal_app_get_preview_mirror_enabled();
-  flip_enable = tiny1c_thermal_app_get_preview_flip_enabled();
   center_temp14 = 0U;
 
   for (y_out = 0U; y_out < CFG_UART_STREAM_FRAME_HEIGHT; y_out++)
@@ -1748,16 +3160,14 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
 
       for (y_inner = 0U; y_inner < CFG_UART_STREAM_DOWNSAMPLE_STEP_Y; y_inner++)
       {
-        uint32_t source_y = y_base + y_inner;
-        uint32_t mapped_source_y = (flip_enable != 0U) ? ((CFG_UART_STREAM_SOURCE_HEIGHT - 1U) - source_y) : source_y;
-        uint32_t row_index = mapped_source_y * CFG_UART_STREAM_SOURCE_WIDTH;
-
         for (x_inner = 0U; x_inner < CFG_UART_STREAM_DOWNSAMPLE_STEP_X; x_inner++)
         {
-          uint32_t source_x = x_base + x_inner;
-          uint32_t mapped_source_x = (mirror_enable != 0U) ? ((CFG_UART_STREAM_SOURCE_WIDTH - 1U) - source_x) : source_x;
-
-          sum_temp14 += temp14_frame[row_index + mapped_source_x];
+          sum_temp14 += app_threadx_temp14_get_preview_oriented_sample(
+              temp14_frame,
+              CFG_UART_STREAM_SOURCE_WIDTH,
+              CFG_UART_STREAM_SOURCE_HEIGHT,
+              (uint16_t)(x_base + x_inner),
+              (uint16_t)(y_base + y_inner));
         }
       }
 
@@ -1800,17 +3210,7 @@ static uint32_t app_threadx_uart_stream_build_packet(uint8_t *tx_buffer, const u
   */
 static void app_threadx_uart_stream_clean_dcache(void *buffer_addr, uint32_t buffer_size)
 {
-  uintptr_t start_addr;
-  uintptr_t end_addr;
-
-  if ((buffer_addr == NULL) || (buffer_size == 0U))
-  {
-    return;
-  }
-
-  start_addr = ((uintptr_t)buffer_addr) & ~((uintptr_t)31U);
-  end_addr = (((uintptr_t)buffer_addr + (uintptr_t)buffer_size + (uintptr_t)31U) & ~((uintptr_t)31U));
-  SCB_CleanDCache_by_Addr((uint32_t *)start_addr, (int32_t)(end_addr - start_addr));
+  app_threadx_dcache_clean_by_addr(buffer_addr, buffer_size);
 }
 
 /**

@@ -3,7 +3,6 @@
 当前检测类别已经升级为：
 
 - `person`
-- `hot_object`
 - `circuit_board_normal`
 - `circuit_board_abnormal_hotspot`
 
@@ -25,29 +24,7 @@
 
 这样更像真实巡检终端，而不是单帧演示。
 
-## 2. 设备异常发热筛查
-
-`hot_object` 和 `circuit_board_abnormal_hotspot` 组合起来，可以做：
-
-- 发热器件筛查
-- 局部异常升温提醒
-- 热源靠近提醒
-
-建议再加：
-
-- 置信度阈值
-- 温差阈值
-- 告警等级
-
-例如：
-
-```text
-if class == circuit_board_abnormal_hotspot
-and max_temp - ambient_temp > threshold:
-    raise warning
-```
-
-## 3. 人体安全交互
+## 2. 人体安全交互
 
 `person` 可以做：
 
@@ -55,9 +32,9 @@ and max_temp - ambient_temp > threshold:
 
 建议再加：
 
-- `person + hot_object` 同屏时的安全提示
+- `person + circuit_board_abnormal_hotspot` 同屏时的安全提示
 
-## 4. 自动截图留证
+## 3. 自动截图留证
 
 很值得加，实际感会明显增强。
 
@@ -72,7 +49,7 @@ and max_temp - ambient_temp > threshold:
 
 这样后面无论比赛还是实际排查，都更像完整产品链路。
 
-## 5. 连续帧稳定跟踪
+## 4. 连续帧稳定跟踪
 
 目标检测上板后，最值得加的不是更复杂模型，而是：
 
@@ -82,7 +59,7 @@ and max_temp - ambient_temp > threshold:
 
 这样 UI 观感会好很多，也更适合嵌入式现场展示。
 
-## 6. 优先级建议
+## 5. 优先级建议
 
 如果只按“投入产出比”排序，我建议：
 
@@ -92,7 +69,7 @@ and max_temp - ambient_temp > threshold:
 4. 异常自动截图
 5. 跨帧框稳定
 
-## 7. 命名建议
+## 6. 命名建议
 
 不建议把异常类直接写成：
 

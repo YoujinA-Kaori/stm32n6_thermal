@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Split raw thermal .bin files into train/val/test by session group."""
+"""Split raw thermal .bin files into train/val/test."""
 
 from __future__ import annotations
 
@@ -27,7 +27,26 @@ from src.common import (
 )
 
 
-def build_group_map(raw_root: Path, class_names: list[str]) -> dict[str, dict[str, list[Path]]]:
+def resolve_split_group_key(bin_path: Path, class_root: Path, group_policy: str) -> str:
+    """Resolve the split grouping key for one raw sample."""
+    if group_policy == "per_file":
+        relative_path = bin_path.relative_to(class_root)
+        return str(relative_path.with_suffix("")).replace("\\", "__").replace("/", "__").replace(" ", "_")
+
+    if group_policy == "session_or_filename_prefix":
+        return derive_group_key(bin_path, class_root)
+
+    raise SystemExit(
+        f"unsupported split.group_policy: {group_policy} "
+        "(expected 'session_or_filename_prefix' or 'per_file')"
+    )
+
+
+def build_group_map(
+    raw_root: Path,
+    class_names: list[str],
+    group_policy: str,
+) -> dict[str, dict[str, list[Path]]]:
     """Collect raw files into class -> group -> file list."""
     grouped_files: dict[str, dict[str, list[Path]]] = {}
 
@@ -36,7 +55,8 @@ def build_group_map(raw_root: Path, class_names: list[str]) -> dict[str, dict[st
         class_groups: dict[str, list[Path]] = defaultdict(list)
         if class_root.exists():
             for bin_path in sorted(path for path in class_root.rglob("*.bin") if path.is_file()):
-                class_groups[derive_group_key(bin_path, class_root)].append(bin_path)
+                group_key = resolve_split_group_key(bin_path, class_root, group_policy)
+                class_groups[group_key].append(bin_path)
         grouped_files[class_name] = dict(class_groups)
 
     return grouped_files
@@ -97,6 +117,10 @@ def copy_split_files(
 ) -> list[dict[str, Any]]:
     """Copy grouped files into processed split folders and return manifest rows."""
     manifest_rows: list[dict[str, Any]] = []
+
+    for split_name in ("train", "val", "test"):
+        for class_name in class_names:
+            ensure_dir(processed_root / split_name / class_name)
 
     for label_index, class_name in enumerate(class_names):
         class_groups = grouped_files[class_name]
@@ -188,6 +212,7 @@ def main() -> int:
 
     split_cfg = config["split"]
     seed = args.seed if args.seed is not None else int(split_cfg["seed"])
+    group_policy = str(split_cfg.get("group_policy", "session_or_filename_prefix"))
     split_ratios = {
         "train": float(split_cfg["train_ratio"]),
         "val": float(split_cfg["val_ratio"]),
@@ -207,7 +232,7 @@ def main() -> int:
         shutil.rmtree(processed_root)
 
     rng = random.Random(seed)
-    grouped_files = build_group_map(raw_root, class_names)
+    grouped_files = build_group_map(raw_root, class_names, group_policy)
     split_assignment: dict[str, dict[str, str]] = {}
 
     for class_name in class_names:
@@ -217,7 +242,7 @@ def main() -> int:
             split_assignment[class_name] = {}
             continue
 
-        if len(class_groups) < 3:
+        if group_policy != "per_file" and len(class_groups) < 3:
             print(
                 f"warning: class {class_name} only has {len(class_groups)} session/group buckets; "
                 "consider adding more capture sessions before trusting validation metrics"

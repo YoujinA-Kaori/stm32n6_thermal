@@ -36,6 +36,11 @@
 	</natures>
 	<linkedResources>
 		<link>
+			<name>AI_App</name>
+			<type>2</type>
+			<location>D:/PracticeProject/Stm32/stm32n6_thermal/ExtMemLoader/X-CUBE-AI/App</location>
+		</link>
+		<link>
 			<name>FileX_Common_Src</name>
 			<type>2</type>
 			<location>D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/filex/common/src</location>
@@ -66,6 +71,11 @@
 			<location>D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/threadx/ports/cortex_m55/gnu/src</location>
 		</link>
 		<link>
+			<name>Middlewares/AI</name>
+			<type>2</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Middlewares/ST/AI</locationURI>
+		</link>
+		<link>
 			<name>BSP/BQ27441/bq27441g1a.h</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/STM32CubeIDE/Appli/BSP/BQ27441/bq27441g1a.h</locationURI>
@@ -79,6 +89,11 @@
 			<name>Drivers/STM32N6xx_HAL_Driver/stm32n6xx_hal.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal.c</locationURI>
+		</link>
+		<link>
+			<name>Drivers/STM32N6xx_HAL_Driver/stm32n6xx_hal_cacheaxi.c</name>
+			<type>1</type>
+			<location>D:/PracticeProject/Stm32/stm32n6_thermal/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_cacheaxi.c</location>
 		</link>
 		<link>
 			<name>Drivers/STM32N6xx_HAL_Driver/stm32n6xx_hal_cortex.c</name>

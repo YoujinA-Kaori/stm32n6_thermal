@@ -76,7 +76,7 @@ thermal_ai_dataset/raw/person/session_a/frame_0001.json
 
 一张图里可以有多个目标，但**文件只放到一个主类别目录**。
 
-例如一张图里同时有人和热物体：
+例如一张图里同时有人和电路板：
 
 ```text
 thermal_ai_dataset/raw/person/session_a/frame_0001.bin
@@ -85,13 +85,13 @@ thermal_ai_dataset/raw/person/session_a/frame_0001.json
 
 此时：
 - `primary_class_name` 写成 `person`
-- `objects` 里把 `person` 和 `hot_object` 都标出来
+- `objects` 里把 `person` 和对应 PCB 类都标出来
 
 不要把同一帧复制到多个类别目录。
 
 ## 6. 标注原则
 
-- `person / hot_object / circuit_board_normal / circuit_board_abnormal_hotspot` 都用 bbox
+- `person / circuit_board_normal / circuit_board_abnormal_hotspot` 都用 bbox
 - 一张图里有多个目标时，全部标出来
 - `empty` 不需要框
 - 框尽量贴合主体热区，不要过松
