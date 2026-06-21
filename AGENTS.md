@@ -1161,3 +1161,106 @@ Likely next task in the next conversation:
    - 先核对输入/输出/类别接口是否与 `app_threadx.c` 当前假设一致
 4. 不要把最终方案建立在 `Debug/Release` 生成物手改上。
    - 仍然优先修改 `.project` / `.cproject` / 工程源文件
+
+## 2026-06-21 Future Model Replacement Workflow
+
+- 当前项目已经明确进入一个新的维护阶段：
+  - **后续如无必要，不要为了迭代模型再次依赖 CubeMX 整体重新生成工程代码**
+- 原因：
+  - 本项目 `CubeMX/CubeIDE` 重新生成后，往往会冲掉或扰动已经人工收口好的：
+    - NPU / IAC / XSPI2 / AXISRAM 相关初始化
+    - ThreadX / AI 接入代码
+    - GUI / FileX / Tiny1C 已验证稳定的工程级改动
+  - 重新收口一次的成本明显高于“直接替换兼容模型”
+
+### 推荐的后续默认策略
+
+- 以后如果只是继续训练更好的 **兼容模型**，默认优先走：
+  - **直接替换旧模型生成物**
+  - **不要重新跑 CubeMX 工程生成**
+- 这里的“兼容模型”指的是以下条件同时满足：
+  - 网络名仍叫：
+    - `thermal`
+  - 输入仍是：
+    - `160 x 120 x 1`
+  - 板端预处理语义仍然一致：
+    - `temp14 -> 背景相对归一化 -> int8`
+  - 检测头仍然兼容当前板端 decode：
+    - `20 x 15` grid
+    - `8` output channels
+  - 类别顺序仍然兼容当前板端映射：
+    - `person`
+    - `circuit_board_normal`
+    - `circuit_board_abnormal_hotspot`
+
+### 兼容模型的最小替换范围
+
+- 若新模型满足上述兼容条件，后续默认只替换这些文件：
+  - `ExtMemLoader/X-CUBE-AI/App/thermal.c`
+  - `ExtMemLoader/X-CUBE-AI/App/thermal.h`
+  - `ExtMemLoader/X-CUBE-AI/App/thermal_generate_report.txt`
+  - `thermal_atonbuf.xSPI2.raw`
+  - `thermal_atonbuf.xSPI2.bin`
+  - `thermal_atonbuf.xSPI2.hex`
+- 然后：
+  - 重新编译 `Appli`
+  - 重新烧录应用固件
+  - 重新烧录新的 `atonbuf` 权重文件
+
+### 默认不要随新模型一起重生成/重覆盖的部分
+
+- 如果只是兼容模型替换，默认**不要**顺手重做或重覆盖这些内容：
+  - `stm32n6_thermal.ioc`
+  - `CubeMX` 重新生成的外设初始化代码
+  - 已人工修正过的 `main.c`
+  - 已人工修正过的 `app_threadx.c`
+  - 已人工修正过的 `stm32n6xx_it.c`
+  - 已人工修正过的 `.project / .cproject`
+  - 已稳定接入的 `Middlewares/ST/AI` 与 `ll_aton` 运行时
+- 换句话说：
+  - **模型迭代默认是“替换模型资产”问题**
+  - 不要把它重新升级成“整工程重生成”问题
+
+### 只有在这些情况出现时，才允许超出“直替换”范围
+
+1. 新模型输入尺寸变了
+2. 新模型输出张量形状变了
+3. 新模型类别数量或顺序变了
+4. 新模型不再使用当前这套轻量 grid detector 头
+5. 新模型网络名不再是 `thermal`
+6. 新模型依赖了不同版本的 `X-CUBE-AI / ll_aton / runtime`
+
+- 只有在这些情况下，才应进入：
+  - 修改 `app_threadx.c`
+  - 修改 decode / 映射 / 阈值
+  - 必要时调整工程配置
+- 即使如此，也仍然应该：
+  - 先做最小人工改动
+  - **不要优先回到 CubeMX 全量重生成**
+
+### 后续替换模型时的快速检查清单
+
+1. 核对 `thermal_generate_report.txt`
+   - 输入尺寸
+   - 输出尺寸
+   - 权重地址
+2. 核对 `app_threadx.c`
+   - `CFG_THERMAL_AI_INPUT_*`
+   - `CFG_THERMAL_AI_GRID_*`
+   - `CFG_THERMAL_AI_OUTPUT_*`
+   - 类别映射
+3. 确认 `CFG_THERMAL_AI_USE_REFERENCE_INPUT == 0U`
+4. 重新烧录新的 `atonbuf`
+5. 上板先看右上角 AI 状态
+   - 如果重新回到类似 `AIWI 43 00`
+   - 优先查权重 / AXISRAM / 输出是否全零
+   - 不要先怀疑“新模型一定训练坏了”
+
+### 对后续 Agent 的强提醒
+
+- 用户已经明确表达：
+  - **不希望以后为了换模型再次依赖 CubeMX 生成代码**
+- 因此后续只要用户说“换一个新模型试试”，默认理解应是：
+  - 先评估是否属于“兼容模型直替换”
+  - 优先给出“最小替换文件清单”
+  - 不要默认建议“重新用 CubeMX 生成一遍工程”
