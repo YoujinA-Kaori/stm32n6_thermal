@@ -1,0 +1,7 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/hal/../draw/../misc/../font/../misc/lv_area.h:123:26:lv_area_get_width	1
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/hal/../draw/../misc/../font/../misc/lv_area.h:133:26:lv_area_get_height	1
+../lvgl/porting/lv_port_disp.c:52:6:lv_port_disp_init	1
+../lvgl/porting/lv_port_disp.c:138:13:disp_init	1
+../lvgl/porting/lv_port_disp.c:147:6:disp_enable_update	1
+../lvgl/porting/lv_port_disp.c:154:6:disp_disable_update	1
+../lvgl/porting/lv_port_disp.c:162:13:disp_flush	4

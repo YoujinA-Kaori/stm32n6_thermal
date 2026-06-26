@@ -1,0 +1,5 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1407:22:LL_AHB4_GRP1_EnableClock	1
+../BSP/TOUCH/gt9xxx.c:39:9:gt9xxx_wr_reg	3
+../BSP/TOUCH/gt9xxx.c:70:6:gt9xxx_rd_reg	2
+../BSP/TOUCH/gt9xxx.c:97:9:gt9xxx_init	6
+../BSP/TOUCH/gt9xxx.c:170:9:gt9xxx_scan	20

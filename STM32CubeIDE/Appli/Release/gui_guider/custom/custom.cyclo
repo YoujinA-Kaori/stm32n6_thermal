@@ -1,0 +1,17 @@
+../gui_guider/custom/custom.c:113:13:thermal_gui_snapshot_set_status	2
+../gui_guider/custom/custom.c:68:20:thermal_gui_get_child_label_text	4
+../gui_guider/custom/custom.c:254:13:thermal_gui_snapshot_draw_badge_with_font	4
+../gui_guider/custom/custom.c:350:13:thermal_gui_snapshot_draw_marker_from_obj	5
+../gui_guider/custom/custom.c:599:13:thermal_gui_gallery_refresh_nav_buttons	7
+../gui_guider/custom/custom.c:837:13:thermal_gui_gallery_back_event_cb	3
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/core/lv_obj_style.h:205:20:lv_obj_set_style_pad_all.constprop	1
+../gui_guider/custom/custom.c:630:13:thermal_gui_gallery_load_entry.isra	3
+../gui_guider/custom/custom.c:879:13:thermal_gui_gallery_delete_event_cb	6
+../gui_guider/custom/custom.c:852:13:thermal_gui_gallery_prev_event_cb	3
+../gui_guider/custom/custom.c:865:13:thermal_gui_gallery_next_event_cb	3
+../gui_guider/custom/custom.c:131:18:thermal_gui_create_custom_button	2
+../gui_guider/custom/custom.c:445:13:thermal_gui_snapshot_capture_from_objects.constprop	13
+../gui_guider/custom/custom.c:751:13:thermal_gui_snapshot_save_event_cb	4
+../gui_guider/custom/custom.c:786:13:thermal_gui_snapshot_save_fullscreen_event_cb	5
+../gui_guider/custom/custom.c:822:13:thermal_gui_gallery_open_event_cb	7
+../gui_guider/custom/custom.c:984:6:custom_init	8

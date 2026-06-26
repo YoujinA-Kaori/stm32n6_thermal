@@ -1,0 +1,14 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1407:22:LL_AHB4_GRP1_EnableClock	24	static
+../BSP/TOUCH/touch.c:53:13:tp_write_byte	24	static
+../BSP/TOUCH/touch.c:81:17:tp_read_ad	24	static
+../BSP/TOUCH/touch.c:127:17:tp_read_xoy	48	static
+../BSP/TOUCH/touch.c:168:13:tp_read_xy	24	static
+../BSP/TOUCH/touch.c:198:16:tp_read_xy2	24	static
+../BSP/TOUCH/touch.c:227:13:tp_draw_touch_point	32	static
+../BSP/TOUCH/touch.c:244:6:tp_draw_big_point	16	static
+../BSP/TOUCH/touch.c:262:16:tp_scan	16	static
+../BSP/TOUCH/touch.c:316:6:tp_save_adjust_data	16	static
+../BSP/TOUCH/touch.c:338:9:tp_get_adjust_data	16	static
+../BSP/TOUCH/touch.c:367:13:tp_adjust_info_show	72	static
+../BSP/TOUCH/touch.c:400:6:tp_adjust	80	static
+../BSP/TOUCH/touch.c:507:9:tp_init	32	static

@@ -1,0 +1,2 @@
+../BSP/KEY/key.c:28:6:key_init	4	static
+../BSP/KEY/key.c:46:9:key_scan	24	static

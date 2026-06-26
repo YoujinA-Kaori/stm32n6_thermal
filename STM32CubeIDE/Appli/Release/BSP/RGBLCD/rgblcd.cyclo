@@ -1,0 +1,17 @@
+../BSP/RGBLCD/rgblcd.c:828:16:rgblcd_ltdc_clk_set.isra	1
+../BSP/RGBLCD/rgblcd.c:183:6:rgblcd_display_dir	2
+../BSP/RGBLCD/rgblcd.c:207:6:rgblcd_fill	2
+../BSP/RGBLCD/rgblcd.c:250:6:rgblcd_color_fill	2
+../BSP/RGBLCD/rgblcd.c:286:6:rgblcd_draw_point	2
+../BSP/RGBLCD/rgblcd.c:311:10:rgblcd_read_point	2
+../BSP/RGBLCD/rgblcd.c:337:6:rgblcd_clear	1
+../BSP/RGBLCD/rgblcd.c:49:6:rgblcd_init	16
+../BSP/RGBLCD/rgblcd.c:351:6:rgblcd_draw_line	8
+../BSP/RGBLCD/rgblcd.c:437:6:rgblcd_draw_hline	4
+../BSP/RGBLCD/rgblcd.c:456:6:rgblcd_draw_rectangle	1
+../BSP/RGBLCD/rgblcd.c:472:6:rgblcd_draw_circle	3
+../BSP/RGBLCD/rgblcd.c:513:6:rgblcd_fill_circle	4
+../BSP/RGBLCD/rgblcd.c:557:6:rgblcd_show_char	13
+../BSP/RGBLCD/rgblcd.c:646:6:rgblcd_show_num	6
+../BSP/RGBLCD/rgblcd.c:689:6:rgblcd_show_xnum	7
+../BSP/RGBLCD/rgblcd.c:737:6:rgblcd_show_string	4

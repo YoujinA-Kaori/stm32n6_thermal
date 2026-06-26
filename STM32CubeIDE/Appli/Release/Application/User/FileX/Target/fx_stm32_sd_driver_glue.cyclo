@@ -1,0 +1,7 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:29:5:fx_stm32_sd_init	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:57:5:fx_stm32_sd_deinit	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:84:5:fx_stm32_sd_get_status	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:112:5:fx_stm32_sd_read_blocks	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:140:5:fx_stm32_sd_write_blocks	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:165:6:HAL_SD_TxCpltCallback	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/Target/fx_stm32_sd_driver_glue.c:183:6:HAL_SD_RxCpltCallback	1

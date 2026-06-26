@@ -1,0 +1,7 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1165:22:LL_AHB3_GRP1_EnableClock	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:98:5:main	5
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:180:6:PeriphCommonClock_Config	2
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:199:15:SystemIsolation_Config	3
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:323:6:HAL_DCMIPP_PIPE_FrameEventCallback	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:338:6:HAL_TIM_PeriodElapsedCallback	2
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:356:6:Error_Handler	1

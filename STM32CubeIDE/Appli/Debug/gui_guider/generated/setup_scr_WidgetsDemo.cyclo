@@ -1,0 +1,15 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/hal/../draw/../misc/lv_color.h:599:26:lv_color_hex	1
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/hal/../draw/sw/../../core/lv_obj_pos.h:199:20:lv_obj_center	1
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/core/lv_obj_style.h:205:20:lv_obj_set_style_pad_all	1
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/widgets/lv_slider.h:84:20:lv_slider_set_value	1
+D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/src/widgets/lv_slider.h:106:20:lv_slider_set_range	1
+../gui_guider/generated/setup_scr_WidgetsDemo.c:62:13:thermal_gui_style_panel	1
+../gui_guider/generated/setup_scr_WidgetsDemo.c:84:18:thermal_gui_create_status_badge	1
+../gui_guider/generated/setup_scr_WidgetsDemo.c:114:18:thermal_gui_create_action_button	4
+../gui_guider/generated/setup_scr_WidgetsDemo.c:146:18:thermal_gui_create_slider_row	3
+../gui_guider/generated/setup_scr_WidgetsDemo.c:195:18:thermal_gui_create_switch_row	2
+../gui_guider/generated/setup_scr_WidgetsDemo.c:231:18:thermal_gui_create_palette_button	3
+../gui_guider/generated/setup_scr_WidgetsDemo.c:275:18:thermal_gui_create_footer_button	4
+../gui_guider/generated/setup_scr_WidgetsDemo.c:305:18:thermal_gui_create_marker_label	1
+../gui_guider/generated/setup_scr_WidgetsDemo.c:332:6:setup_scr_WidgetsDemo	1
+../gui_guider/generated/setup_scr_WidgetsDemo.c:653:6:setup_scr_WidgetsDemoFullscreen	1

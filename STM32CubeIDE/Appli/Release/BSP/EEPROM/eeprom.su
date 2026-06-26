@@ -1,0 +1,4 @@
+../BSP/EEPROM/eeprom.c:30:6:eeprom_init	0	static
+../BSP/EEPROM/eeprom.c:42:9:eeprom_check	8	static
+../BSP/EEPROM/eeprom.c:54:6:eeprom_read	24	static
+../BSP/EEPROM/eeprom.c:66:6:eeprom_write	48	static

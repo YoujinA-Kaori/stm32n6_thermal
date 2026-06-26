@@ -1,0 +1,5 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1407:22:LL_AHB4_GRP1_EnableClock	24	static
+../BSP/TOUCH/ft5206.c:36:9:ft5206_wr_reg	24	static
+../BSP/TOUCH/ft5206.c:65:6:ft5206_rd_reg	32	static
+../BSP/TOUCH/ft5206.c:90:9:ft5206_init	32	static
+../BSP/TOUCH/ft5206.c:144:9:ft5206_scan	32	static

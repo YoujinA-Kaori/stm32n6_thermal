@@ -1,0 +1,2 @@
+../BSP/Tiny1C/VDCMD/data_rw.c:4:12:i2c_data_read	24	static
+../BSP/Tiny1C/VDCMD/data_rw.c:78:12:i2c_data_write	32	static

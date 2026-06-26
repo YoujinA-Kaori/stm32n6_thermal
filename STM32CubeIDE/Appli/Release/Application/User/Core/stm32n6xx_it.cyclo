@@ -1,0 +1,13 @@
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:75:6:NMI_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:90:6:HardFault_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:105:6:MemManage_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:120:6:BusFault_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:135:6:UsageFault_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:150:6:SecureFault_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:165:6:DebugMon_Handler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:185:6:IAC_IRQHandler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:199:6:DCMIPP_IRQHandler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:213:6:HPDMA1_Channel15_IRQHandler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:227:6:GPDMA1_Channel0_IRQHandler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:241:6:TIM7_IRQHandler	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/stm32n6xx_it.c:255:6:USART1_IRQHandler	1

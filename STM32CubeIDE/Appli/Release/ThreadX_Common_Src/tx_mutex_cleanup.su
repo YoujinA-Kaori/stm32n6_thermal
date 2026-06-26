@@ -1,0 +1,2 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/threadx/common/src/tx_mutex_cleanup.c:78:7:_tx_mutex_cleanup	8	static,ignoring_inline_asm
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/threadx/common/src/tx_mutex_cleanup.c:259:7:_tx_mutex_thread_release	16	static,ignoring_inline_asm

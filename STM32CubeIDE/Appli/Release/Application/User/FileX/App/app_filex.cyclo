@@ -1,0 +1,12 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:972:16:app_filex_is_snapshot_name	10
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:773:13:app_filex_ensure_ready_locked	14
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:794:13:app_filex_collect_entries_locked.constprop	20
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:214:6:MX_FileX_Init	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:253:9:app_filex_is_ready	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:262:6:app_filex_get_last_status	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:271:6:app_filex_prepare	4
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:310:6:app_filex_snapshot_save_rgb565	20
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:423:6:app_filex_snapshot_get_list	8
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:487:6:app_filex_snapshot_load_rgb565	27
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:605:6:app_filex_snapshot_delete	6
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/FileX/App/app_filex.c:646:13:app_filex_status_to_string	9

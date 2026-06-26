@@ -1,0 +1,16 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:19:17:thermal_ai_runtime_clamp_u16	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:39:16:thermal_ai_runtime_mode_uses_board_alarm	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:44:6:thermal_ai_runtime_init	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:62:6:thermal_ai_runtime_reset	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:74:6:thermal_ai_runtime_set_mode	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:85:23:thermal_ai_runtime_get_mode	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:95:13:thermal_ai_runtime_get_mode_name	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:109:13:thermal_ai_runtime_get_class_name	6
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:129:9:thermal_ai_runtime_result_has_class	6
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:154:6:thermal_ai_runtime_update	9
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:205:9:thermal_ai_runtime_is_alarm_active	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:215:9:thermal_ai_runtime_should_capture	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:225:6:thermal_ai_runtime_clear_capture_latch	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:235:6:thermal_ai_runtime_reset_alarm	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:248:6:thermal_ai_runtime_scale_point	9
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/thermal_ai_runtime.c:290:6:thermal_ai_runtime_scale_bbox	5

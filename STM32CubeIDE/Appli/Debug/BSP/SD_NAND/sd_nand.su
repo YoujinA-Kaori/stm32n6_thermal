@@ -1,0 +1,3 @@
+../BSP/SD_NAND/sd_nand.c:35:9:sd_nand_init	8	static
+../BSP/SD_NAND/sd_nand.c:59:9:sd_nand_read_disk	40	static
+../BSP/SD_NAND/sd_nand.c:90:9:sd_nand_write_disk	40	static

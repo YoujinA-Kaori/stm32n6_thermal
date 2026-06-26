@@ -1,0 +1,7 @@
+../BSP/Tiny1C/VDCMD/vdcmd.c:6:12:vdcmd_rw_handle_register	3
+../BSP/Tiny1C/VDCMD/vdcmd.c:25:12:short_cmd_read	7
+../BSP/Tiny1C/VDCMD/vdcmd.c:69:12:short_cmd_write	10
+../BSP/Tiny1C/VDCMD/vdcmd.c:133:12:standard_cmd_read	8
+../BSP/Tiny1C/VDCMD/vdcmd.c:194:12:standard_cmd_write	16
+../BSP/Tiny1C/VDCMD/vdcmd.c:308:12:long_cmd_read	8
+../BSP/Tiny1C/VDCMD/vdcmd.c:372:12:long_cmd_write	6

@@ -1,0 +1,5 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_NN_interface.h:479:32:LL_Buffer_addr_base	24	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_NN_interface.h:489:32:LL_Buffer_addr_start	16	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_NN_interface.h:494:32:LL_Buffer_addr_end	16	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_NN_interface.h:504:26:LL_Buffer_len	16	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_profiler.c:36:5:LL_ATON_LIB_ConvInteger	248	static

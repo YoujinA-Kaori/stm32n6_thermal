@@ -1,0 +1,63 @@
+################################################################################
+# Automatically-generated file. Do not edit!
+# Toolchain: GNU Tools for STM32 (14.3.rel1)
+################################################################################
+
+# Add inputs and outputs from these tool invocations to the build variables 
+C_SRCS += \
+../lvgl/src/draw/lv_draw.c \
+../lvgl/src/draw/lv_draw_arc.c \
+../lvgl/src/draw/lv_draw_img.c \
+../lvgl/src/draw/lv_draw_label.c \
+../lvgl/src/draw/lv_draw_layer.c \
+../lvgl/src/draw/lv_draw_line.c \
+../lvgl/src/draw/lv_draw_mask.c \
+../lvgl/src/draw/lv_draw_rect.c \
+../lvgl/src/draw/lv_draw_transform.c \
+../lvgl/src/draw/lv_draw_triangle.c \
+../lvgl/src/draw/lv_img_buf.c \
+../lvgl/src/draw/lv_img_cache.c \
+../lvgl/src/draw/lv_img_decoder.c 
+
+OBJS += \
+./lvgl/src/draw/lv_draw.o \
+./lvgl/src/draw/lv_draw_arc.o \
+./lvgl/src/draw/lv_draw_img.o \
+./lvgl/src/draw/lv_draw_label.o \
+./lvgl/src/draw/lv_draw_layer.o \
+./lvgl/src/draw/lv_draw_line.o \
+./lvgl/src/draw/lv_draw_mask.o \
+./lvgl/src/draw/lv_draw_rect.o \
+./lvgl/src/draw/lv_draw_transform.o \
+./lvgl/src/draw/lv_draw_triangle.o \
+./lvgl/src/draw/lv_img_buf.o \
+./lvgl/src/draw/lv_img_cache.o \
+./lvgl/src/draw/lv_img_decoder.o 
+
+C_DEPS += \
+./lvgl/src/draw/lv_draw.d \
+./lvgl/src/draw/lv_draw_arc.d \
+./lvgl/src/draw/lv_draw_img.d \
+./lvgl/src/draw/lv_draw_label.d \
+./lvgl/src/draw/lv_draw_layer.d \
+./lvgl/src/draw/lv_draw_line.d \
+./lvgl/src/draw/lv_draw_mask.d \
+./lvgl/src/draw/lv_draw_rect.d \
+./lvgl/src/draw/lv_draw_transform.d \
+./lvgl/src/draw/lv_draw_triangle.d \
+./lvgl/src/draw/lv_img_buf.d \
+./lvgl/src/draw/lv_img_cache.d \
+./lvgl/src/draw/lv_img_decoder.d 
+
+
+# Each subdirectory must supply rules for building sources it contributes
+lvgl/src/draw/%.o lvgl/src/draw/%.su lvgl/src/draw/%.cyclo: ../lvgl/src/draw/%.c lvgl/src/draw/subdir.mk
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32N647xx -DTX_INCLUDE_USER_DEFINE_FILE -DTX_SINGLE_MODE_SECURE=1 -DFX_INCLUDE_USER_DEFINE_FILE -DLL_ATON_DUMP_DEBUG_API -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC -DLL_ATON_SW_FALLBACK -DLL_ATON_EB_DBG_INFO -DLL_ATON_DBG_BUFFER_INFO_EXCLUDED=1 -c -I../../../Appli/Core/Inc -I../../../Secure_nsclib -I../../../Drivers/STM32N6xx_HAL_Driver/Inc -I../../../Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../Drivers/CMSIS/Include -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/BSP" -I../../../../../STM32Cube_FW_N6_V1.0.0/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../../../STM32Cube_FW_N6_V1.0.0/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../../../STM32Cube_FW_N6_V1.0.0/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../../../STM32Cube_FW_N6_V1.0.0/Drivers/CMSIS/Include -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli" -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl" -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/lvgl/porting" -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/gui_guider/custom" -I"D:/PracticeProject/Stm32/stm32n6_thermal/STM32CubeIDE/Appli/gui_guider/generated" -I../../../Appli/AZURE_RTOS/App -I../../../Middlewares/ST/threadx/common/inc -I../../../Middlewares/ST/threadx/ports/cortex_m55/gnu/inc -I../../../Appli/FileX/App -I../../../Appli/FileX/Target -I../../../Middlewares/ST/filex/common/inc -I../../../Middlewares/ST/filex/ports/generic/inc -I../../../Middlewares/ST/AI/Npu/Devices/STM32N6XX -I../../../ExtMemLoader/X-CUBE-AI/App -I../../../Middlewares/ST/AI/Inc -I../../../Middlewares/ST/AI/Npu/ll_aton -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+clean: clean-lvgl-2f-src-2f-draw
+
+clean-lvgl-2f-src-2f-draw:
+	-$(RM) ./lvgl/src/draw/lv_draw.cyclo ./lvgl/src/draw/lv_draw.d ./lvgl/src/draw/lv_draw.o ./lvgl/src/draw/lv_draw.su ./lvgl/src/draw/lv_draw_arc.cyclo ./lvgl/src/draw/lv_draw_arc.d ./lvgl/src/draw/lv_draw_arc.o ./lvgl/src/draw/lv_draw_arc.su ./lvgl/src/draw/lv_draw_img.cyclo ./lvgl/src/draw/lv_draw_img.d ./lvgl/src/draw/lv_draw_img.o ./lvgl/src/draw/lv_draw_img.su ./lvgl/src/draw/lv_draw_label.cyclo ./lvgl/src/draw/lv_draw_label.d ./lvgl/src/draw/lv_draw_label.o ./lvgl/src/draw/lv_draw_label.su ./lvgl/src/draw/lv_draw_layer.cyclo ./lvgl/src/draw/lv_draw_layer.d ./lvgl/src/draw/lv_draw_layer.o ./lvgl/src/draw/lv_draw_layer.su ./lvgl/src/draw/lv_draw_line.cyclo ./lvgl/src/draw/lv_draw_line.d ./lvgl/src/draw/lv_draw_line.o ./lvgl/src/draw/lv_draw_line.su ./lvgl/src/draw/lv_draw_mask.cyclo ./lvgl/src/draw/lv_draw_mask.d ./lvgl/src/draw/lv_draw_mask.o ./lvgl/src/draw/lv_draw_mask.su ./lvgl/src/draw/lv_draw_rect.cyclo ./lvgl/src/draw/lv_draw_rect.d ./lvgl/src/draw/lv_draw_rect.o ./lvgl/src/draw/lv_draw_rect.su ./lvgl/src/draw/lv_draw_transform.cyclo ./lvgl/src/draw/lv_draw_transform.d ./lvgl/src/draw/lv_draw_transform.o ./lvgl/src/draw/lv_draw_transform.su ./lvgl/src/draw/lv_draw_triangle.cyclo ./lvgl/src/draw/lv_draw_triangle.d ./lvgl/src/draw/lv_draw_triangle.o ./lvgl/src/draw/lv_draw_triangle.su ./lvgl/src/draw/lv_img_buf.cyclo ./lvgl/src/draw/lv_img_buf.d ./lvgl/src/draw/lv_img_buf.o ./lvgl/src/draw/lv_img_buf.su ./lvgl/src/draw/lv_img_cache.cyclo ./lvgl/src/draw/lv_img_cache.d ./lvgl/src/draw/lv_img_cache.o ./lvgl/src/draw/lv_img_cache.su ./lvgl/src/draw/lv_img_decoder.cyclo ./lvgl/src/draw/lv_img_decoder.d ./lvgl/src/draw/lv_img_decoder.o ./lvgl/src/draw/lv_img_decoder.su
+
+.PHONY: clean-lvgl-2f-src-2f-draw
+

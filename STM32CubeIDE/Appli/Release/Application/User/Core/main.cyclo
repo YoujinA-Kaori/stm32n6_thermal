@@ -1,0 +1,7 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:679:22:LL_MEM_EnableClock	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:349:13:axisram_power_on	3
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:104:5:main	7
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:191:6:PeriphCommonClock_Config	2
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:415:6:HAL_DCMIPP_PIPE_FrameEventCallback	1
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:430:6:HAL_TIM_PeriodElapsedCallback	2
+D://PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/main.c:448:6:Error_Handler	1

@@ -28,8 +28,6 @@ pip-wheel-metadata/
 
 # STM32CubeIDE build outputs
 Binary/
-STM32CubeIDE/Appli/Debug/
-STM32CubeIDE/Appli/Release/
 
 # Local generated thermal outputs
 thermal_out/

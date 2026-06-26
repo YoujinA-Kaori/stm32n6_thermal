@@ -1,0 +1,4 @@
+../../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1407:22:LL_AHB4_GRP1_EnableClock	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/ltdc.c:30:6:MX_LTDC_Init	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/ltdc.c:87:6:HAL_LTDC_MspInit	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/ltdc.c:190:6:HAL_LTDC_MspDeInit	2

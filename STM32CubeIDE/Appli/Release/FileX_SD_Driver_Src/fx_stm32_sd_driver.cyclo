@@ -1,0 +1,2 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/filex/common/drivers/fx_stm32_sd_driver.c:36:12:check_sd_status.constprop	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/filex/common/drivers/fx_stm32_sd_driver.c:57:7:fx_stm32_sd_driver	14

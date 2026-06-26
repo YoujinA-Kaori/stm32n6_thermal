@@ -1,0 +1,3 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/sdmmc.c:31:6:MX_SDMMC2_SD_Init	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/sdmmc.c:57:6:HAL_SD_MspInit	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/sdmmc.c:118:6:HAL_SD_MspDeInit	2

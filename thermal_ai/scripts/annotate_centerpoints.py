@@ -21,6 +21,7 @@ from src.common import (
     get_detection_class_names,
     load_dataset_config,
     load_json,
+    load_sidecar_annotation,
     load_temp14_frame,
     normalize_sidecar_annotation,
     resolve_workspace_path,
@@ -41,6 +42,9 @@ class AnnotationTool:
         raw_root: Path,
         input_root: Path | None,
         session_name: str | None,
+        session_prefix: str | None,
+        auto_samples_per_session: int,
+        startup_message: str | None = None,
     ) -> None:
         try:
             from PIL import Image, ImageDraw, ImageTk
@@ -58,7 +62,13 @@ class AnnotationTool:
         self.detection_class_names = get_detection_class_names(config)
         self.raw_root = raw_root
         self.input_root = input_root
-        self.session_name = session_name.strip() if session_name is not None and session_name.strip() else None
+        self.fixed_session_name = session_name.strip() if session_name is not None and session_name.strip() else None
+        self.auto_session_prefix = session_prefix.strip() if session_prefix is not None and session_prefix.strip() else None
+        self.auto_samples_per_session = max(int(auto_samples_per_session), 0)
+        self.auto_session_index = 1
+        self.auto_session_saved_count = 0
+        self.current_session_name: str | None = None
+        self.startup_message = startup_message
         self.index = 0
         self.current_primary_class_name: str | None = None
         self.current_objects: list[AnnotatedObject] = []
@@ -90,14 +100,114 @@ class AnnotationTool:
 
         self.info_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="")
+        self.session_var = tk.StringVar(value="")
         self.selected_class_var = tk.StringVar(value="")
         self.primary_class_var = tk.StringVar(value="")
         self.object_count_var = tk.StringVar(value="")
         self.object_list_var = tk.StringVar(value="")
 
+        self._initialize_session_strategy()
+
         self._build_ui()
         self._bind_keys()
         self._load_current_sample()
+
+    @staticmethod
+    def _sanitize_session_token(raw_value: str | None, fallback: str) -> str:
+        """Normalize one session/group token into a filesystem-safe name."""
+        if raw_value is None:
+            candidate = fallback
+        else:
+            candidate = raw_value.strip()
+            if not candidate:
+                candidate = fallback
+
+        safe_chars = []
+        for char in candidate:
+            if char.isalnum() or char in ("_", "-"):
+                safe_chars.append(char)
+            else:
+                safe_chars.append("_")
+
+        normalized = "".join(safe_chars).strip("_-")
+        return normalized if normalized else fallback
+
+    def _is_external_input_root(self) -> bool:
+        """Return whether the current input root is outside the managed raw dataset tree."""
+        if self.input_root is None:
+            return False
+
+        try:
+            self.input_root.relative_to(self.raw_root)
+            return False
+        except ValueError:
+            return True
+
+    def _format_auto_session_name(self, session_index: int) -> str:
+        """Build one auto-generated coarse grouping name."""
+        prefix = self._sanitize_session_token(self.auto_session_prefix, "session_auto")
+        return f"{prefix}_{session_index:03d}"
+
+    def _initialize_session_strategy(self) -> None:
+        """Resolve whether this run uses a fixed session, existing folders, or auto-grouping."""
+        if self.fixed_session_name is not None:
+            self.fixed_session_name = self._sanitize_session_token(self.fixed_session_name, "session_fixed")
+            self.current_session_name = self.fixed_session_name
+            return
+
+        if self.auto_session_prefix is None and self._is_external_input_root():
+            default_prefix = self.input_root.name if self.input_root is not None else "session_auto"
+            self.auto_session_prefix = self._sanitize_session_token(default_prefix, "session_auto")
+
+        if self.auto_session_prefix is not None:
+            self.auto_session_prefix = self._sanitize_session_token(self.auto_session_prefix, "session_auto")
+            self.current_session_name = self._format_auto_session_name(self.auto_session_index)
+
+    def _advance_auto_session(self) -> str:
+        """Advance to the next coarse grouping bucket and return its new name."""
+        if self.auto_session_prefix is None:
+            default_prefix = self.input_root.name if self.input_root is not None else "session_auto"
+            self.auto_session_prefix = self._sanitize_session_token(default_prefix, "session_auto")
+
+        self.auto_session_index += 1
+        self.auto_session_saved_count = 0
+        self.current_session_name = self._format_auto_session_name(self.auto_session_index)
+        return self.current_session_name
+
+    def _current_session_display_text(self, bin_path: Path | None = None) -> str:
+        """Return one short status string describing the active save bucket."""
+        if self.fixed_session_name is not None:
+            return f"固定分组: {self.fixed_session_name}"
+
+        if self.auto_session_prefix is not None and self.current_session_name is not None:
+            if self.auto_samples_per_session > 0:
+                return (
+                    f"自动分组: {self.current_session_name} "
+                    f"({self.auto_session_saved_count}/{self.auto_samples_per_session})"
+                )
+            return f"自动分组: {self.current_session_name}"
+
+        if bin_path is not None:
+            return f"当前目录分组: {self._derive_target_session_name(bin_path)}"
+        return "当前目录分组"
+
+    def advance_session_group(self) -> None:
+        """Manually roll over to the next coarse grouping bucket."""
+        if self.fixed_session_name is not None:
+            self._update_status("当前处于固定分组模式，不能手动切换到新分组")
+            return
+
+        if self.auto_session_prefix is None and not self._is_external_input_root():
+            self._update_status("当前输入已经在 raw 目录内；如需手动分组，请启动时传入 --session-prefix")
+            return
+
+        previous_session_name = self.current_session_name
+        next_session_name = self._advance_auto_session()
+        self.session_var.set(self._current_session_display_text(self.bin_paths[self.index] if self.bin_paths else None))
+        if previous_session_name is None:
+            self._update_status(f"已启用自动分组：{next_session_name}")
+        else:
+            self._update_status(f"已切换到新分组：{next_session_name}")
 
     def _build_ui(self) -> None:
         """构建主界面。"""
@@ -105,6 +215,7 @@ class AnnotationTool:
         top_frame.pack(fill=tk.X, padx=8, pady=8)
         tk.Label(top_frame, textvariable=self.info_var, anchor="w", justify=tk.LEFT, font=("Microsoft YaHei UI", 10)).pack(fill=tk.X)
         tk.Label(top_frame, textvariable=self.status_var, anchor="w", justify=tk.LEFT, fg="#0B5", font=("Microsoft YaHei UI", 10)).pack(fill=tk.X)
+        tk.Label(top_frame, textvariable=self.session_var, anchor="w", justify=tk.LEFT, fg="#555555", font=("Microsoft YaHei UI", 10)).pack(fill=tk.X)
 
         preview_frame = tk.Frame(self.root)
         preview_frame.pack(fill=tk.BOTH, expand=False, padx=8)
@@ -145,6 +256,7 @@ class AnnotationTool:
         ]
         for index, (label, command) in enumerate(buttons):
             tk.Button(button_frame, text=label, command=command, width=12).grid(row=0, column=index, padx=3, pady=3)
+        tk.Button(button_frame, text="新分组", command=self.advance_session_group, width=12).grid(row=1, column=0, padx=3, pady=3, sticky="w")
 
         object_list_frame = tk.Frame(self.root)
         object_list_frame.pack(fill=tk.X, padx=8, pady=8)
@@ -168,6 +280,8 @@ class AnnotationTool:
             "5. 按 S 或 Enter 保存并切到下一张。",
             "6. 如果输入来自 thermal_out，保存时会自动把样本移动到 raw/<类别>/<session>/。",
         ]
+        help_lines.append("7. 按 G 或点击“新分组”可以在你切场景时手动开启下一批。")
+        help_lines.append("8. 从 thermal_out 导入时，工具可以自动按小批次归档，减少你手工管理 session 的压力。")
         tk.Label(
             self.root,
             text="\n".join(help_lines),
@@ -186,6 +300,8 @@ class AnnotationTool:
         self.root.bind("E", lambda _event: self.mark_empty_and_next())
         self.root.bind("p", lambda _event: self.set_primary_class_to_selected())
         self.root.bind("P", lambda _event: self.set_primary_class_to_selected())
+        self.root.bind("g", lambda _event: self.advance_session_group())
+        self.root.bind("G", lambda _event: self.advance_session_group())
         self.root.bind("<Left>", lambda _event: self.previous_sample())
         self.root.bind("<Right>", lambda _event: self.next_sample())
         self.root.bind("<BackSpace>", lambda _event: self.delete_last_object())
@@ -228,8 +344,11 @@ class AnnotationTool:
 
     def _derive_target_session_name(self, bin_path: Path) -> str:
         """保存样本时推断目标 session 目录。"""
-        if self.session_name is not None:
-            return self.session_name
+        if self.fixed_session_name is not None:
+            return self.fixed_session_name
+
+        if self.auto_session_prefix is not None and self.current_session_name is not None:
+            return self.current_session_name
 
         try:
             relative = bin_path.relative_to(self.raw_root)
@@ -262,9 +381,8 @@ class AnnotationTool:
             return self.current_objects[0].class_name
         return None
 
-    def _build_target_bin_path(self, source_bin_path: Path, target_class_name: str) -> Path:
+    def _build_target_bin_path(self, source_bin_path: Path, target_class_name: str, session_name: str) -> Path:
         """构建样本保存到 raw 数据集后的目标路径。"""
-        session_name = self._derive_target_session_name(source_bin_path)
         return self.raw_root / target_class_name / session_name / source_bin_path.name
 
     def _move_sample_artifacts(self, source_bin_path: Path, target_bin_path: Path) -> None:
@@ -329,7 +447,8 @@ class AnnotationTool:
 
         self.preview_image = preview_image
         self._refresh_canvas()
-        self._update_status("")
+        self._update_status(self.startup_message or "")
+        self.startup_message = None
 
     def _refresh_canvas(self) -> None:
         """重绘预览图和所有框。"""
@@ -365,6 +484,7 @@ class AnnotationTool:
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo_image)
 
         self.info_var.set(f"[{self.index + 1}/{len(self.bin_paths)}] {self._relative_display_path(self.bin_paths[self.index])}")
+        self.session_var.set(self._current_session_display_text(self.bin_paths[self.index]))
         self.selected_class_var.set(self._display_class_name(self.selected_object_class))
         self.primary_class_var.set(
             self._display_class_name(self.current_primary_class_name)
@@ -517,6 +637,7 @@ class AnnotationTool:
         """保存当前标注，并把样本归档到 raw 数据集目录。"""
         bin_path = self.bin_paths[self.index]
         target_class_name = self._derive_target_class_name()
+        active_session_name = self._derive_target_session_name(bin_path)
 
         if not self.current_empty and not self.current_objects:
             messagebox.showerror("保存失败", "当前样本不是空场景，但还没有标注框。")
@@ -539,7 +660,7 @@ class AnnotationTool:
                 )
                 return False
 
-        target_bin_path = self._build_target_bin_path(bin_path, target_class_name)
+        target_bin_path = self._build_target_bin_path(bin_path, target_class_name, active_session_name)
         annotation_path = annotation_path_for_bin(target_bin_path)
 
         try:
@@ -553,7 +674,15 @@ class AnnotationTool:
 
         self.bin_paths[self.index] = target_bin_path
         save_json(annotation_path, self._build_annotation_payload())
-        self._update_status(f"已保存到：{self._relative_display_path(target_bin_path)}")
+        status_message = f"已保存到：{self._relative_display_path(target_bin_path)}"
+        if self.auto_session_prefix is not None and self.current_session_name == active_session_name:
+            self.auto_session_saved_count += 1
+            if self.auto_samples_per_session > 0 and self.auto_session_saved_count >= self.auto_samples_per_session:
+                next_session_name = self._advance_auto_session()
+                status_message += f" | 当前分组已满，下一组：{next_session_name}"
+
+        self.session_var.set(self._current_session_display_text(target_bin_path))
+        self._update_status(status_message)
         return True
 
     def save_and_next(self) -> None:
@@ -609,6 +738,19 @@ class AnnotationTool:
         self._load_current_sample()
 
 
+def is_sample_already_annotated(bin_path: Path) -> bool:
+    """Return whether one sample already has a usable sidecar annotation."""
+    try:
+        annotation_payload = load_sidecar_annotation(bin_path)
+    except (OSError, ValueError):
+        return False
+
+    annotation = normalize_sidecar_annotation(annotation_payload)
+    if annotation is None:
+        return False
+    return annotation.is_empty or bool(annotation.objects)
+
+
 def collect_bin_paths(input_path: Path) -> list[Path]:
     """从文件或目录中收集 .bin 文件。"""
     if input_path.is_file():
@@ -637,6 +779,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--raw-root", type=Path, default=None, help="归类保存时使用的 raw 数据集根目录")
     parser.add_argument("--session-name", default=None, help="从外部目录导入样本时使用的 session 名")
+    parser.add_argument("--session-prefix", default=None, help="启用自动粗分组时使用的前缀，例如 thermal_people")
+    parser.add_argument(
+        "--auto-samples-per-session",
+        type=int,
+        default=12,
+        help="自动粗分组时每组最多保存多少张；传 0 表示只手动按 G 或“新分组”切换",
+    )
     parser.add_argument("--scale", type=int, default=4, help="预览放大倍数")
     return parser
 
@@ -648,7 +797,7 @@ def main() -> int:
 
     input_path = args.input if args.input is not None else resolve_workspace_path(config["dataset_paths"]["raw_root"])
     raw_root = args.raw_root if args.raw_root is not None else resolve_workspace_path(config["dataset_paths"]["raw_root"])
-    bin_paths = collect_bin_paths(input_path)
+    bin_paths, startup_message = collect_pending_bin_paths(input_path)
 
     root = tk.Tk()
     AnnotationTool(
@@ -659,9 +808,32 @@ def main() -> int:
         raw_root=raw_root,
         input_root=input_path if input_path.exists() else None,
         session_name=args.session_name,
+        session_prefix=args.session_prefix,
+        auto_samples_per_session=args.auto_samples_per_session,
+        startup_message=startup_message,
     )
     root.mainloop()
     return 0
+
+
+def collect_pending_bin_paths(input_path: Path) -> tuple[list[Path], str | None]:
+    """Collect samples and skip already-annotated directory entries by default."""
+    all_bin_paths = collect_bin_paths(input_path)
+    if input_path.is_file():
+        if is_sample_already_annotated(all_bin_paths[0]):
+            return all_bin_paths, "褰撳墠鍗曟牱鏈凡鏈夋爣娉紝宸茬洿鎺ヨ浇鍏ヤ緵浣犲洖鐪嬫垨淇敼"
+        return all_bin_paths, None
+
+    selected_bin_paths = [bin_path for bin_path in all_bin_paths if not is_sample_already_annotated(bin_path)]
+    skipped_count = len(all_bin_paths) - len(selected_bin_paths)
+    if not selected_bin_paths:
+        raise SystemExit(
+            f"鐩綍涓嬬殑 {len(all_bin_paths)} 寮?.bin 鏍锋湰閮藉凡鏈夋爣娉ㄣ€? "
+            "濡傛灉闇€瑕佸洖鐪嬫棫鏍囨敞锛岃鐩存帴鎸囧畾鍗曚釜 .bin 鏂囦欢浣滀负 --input"
+        )
+    if skipped_count > 0:
+        return selected_bin_paths, f"鏈鍙姞杞芥湭鏍囨敞鏍锋湰锛?{len(selected_bin_paths)}/{len(all_bin_paths)} 寮?.bin锛岃烦杩?{skipped_count} 寮犲凡瀹屾垚"
+    return selected_bin_paths, None
 
 
 if __name__ == "__main__":

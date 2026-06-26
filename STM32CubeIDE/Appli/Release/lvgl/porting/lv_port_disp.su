@@ -1,0 +1,4 @@
+../lvgl/porting/lv_port_disp.c:162:13:disp_flush	24	static,ignoring_inline_asm
+../lvgl/porting/lv_port_disp.c:52:6:lv_port_disp_init	8	static
+../lvgl/porting/lv_port_disp.c:147:6:disp_enable_update	0	static
+../lvgl/porting/lv_port_disp.c:154:6:disp_disable_update	0	static

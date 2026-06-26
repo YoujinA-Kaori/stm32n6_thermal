@@ -1,0 +1,9 @@
+../BSP/TOUCH/ctiic.c:30:13:ct_iic_delay	1
+../BSP/TOUCH/ctiic.c:66:6:ct_iic_start	1
+../BSP/TOUCH/ctiic.c:82:6:ct_iic_stop	1
+../BSP/TOUCH/ctiic.c:40:6:ct_iic_init	1
+../BSP/TOUCH/ctiic.c:98:9:ct_iic_wait_ack	3
+../BSP/TOUCH/ctiic.c:133:6:ct_iic_ack	1
+../BSP/TOUCH/ctiic.c:150:6:ct_iic_nack	1
+../BSP/TOUCH/ctiic.c:165:6:ct_iic_send_byte	3
+../BSP/TOUCH/ctiic.c:187:9:ct_iic_read_byte	4

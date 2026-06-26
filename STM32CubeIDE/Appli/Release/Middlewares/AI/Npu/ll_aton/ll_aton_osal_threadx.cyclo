@@ -1,0 +1,12 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_threadx.h:85:22:_my_disable_preemption	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_threadx.h:140:22:_my_tx_thread_priority_get	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_threadx.h:148:22:_my_tx_thread_priority_change	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_threadx.h:102:22:_my_enable_preemption	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:52:6:aton_osal_threadx_init	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:86:6:aton_osal_threadx_deinit	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:95:6:aton_osal_threadx_dao_lock	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:164:6:aton_osal_threadx_dao_unlock	4
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:221:6:aton_osal_threadx_lock	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:233:6:aton_osal_threadx_unlock	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:272:6:aton_osal_threadx_wfe	1
+D:/PracticeProject/Stm32/stm32n6_thermal/Middlewares/ST/AI/Npu/ll_aton/ll_aton_osal_rtos_template.inc:287:6:aton_osal_threadx_signal_event	1

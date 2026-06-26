@@ -1,0 +1,4 @@
+../../../Appli/Core/Inc/partition_stm32n647xx.h:444:22:TZ_SAU_Setup	4	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/system_stm32n6xx_s.c:184:6:SystemInit	8	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/system_stm32n6xx_s.c:268:6:SystemCoreClockUpdate	56	static
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/system_stm32n6xx_s.c:428:24:SECURE_SystemCoreClockUpdate	16	static

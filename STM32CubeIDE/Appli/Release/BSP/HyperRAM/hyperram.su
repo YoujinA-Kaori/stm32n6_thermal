@@ -1,0 +1,5 @@
+../BSP/HyperRAM/hyperram.c:124:31:HyperRAM_ReadRegister	48	static
+../BSP/HyperRAM/hyperram.c:28:24:HyperRAM_Init	56	static
+../BSP/HyperRAM/hyperram.c:65:24:HyperRAM_EnableMemoryMappedMode	56	static
+../BSP/HyperRAM/hyperram.c:89:24:HyperRAM_DisableMemoryMappedMode	8	static,ignoring_inline_asm
+../BSP/HyperRAM/hyperram.c:103:24:HyperRAM_GetMemoryMappedAddress	0	static

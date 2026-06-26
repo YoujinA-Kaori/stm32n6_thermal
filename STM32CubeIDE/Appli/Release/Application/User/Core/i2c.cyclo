@@ -1,0 +1,7 @@
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:35:6:MX_I2C4_Init	4
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:78:6:HAL_I2C_MspInit	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:118:6:HAL_I2C_MspDeInit	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:149:6:app_i2c4_bus_mutex_init	3
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:169:6:app_i2c4_bus_lock	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:187:6:app_i2c4_bus_unlock	2
+D:/PracticeProject/Stm32/stm32n6_thermal/Appli/Core/Src/i2c.c:200:6:app_i2c4_bus_recover_locked	2

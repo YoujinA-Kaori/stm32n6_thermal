@@ -1,0 +1,4 @@
+../BSP/TOUCH/gt9xxx.c:39:9:gt9xxx_wr_reg	16	static
+../BSP/TOUCH/gt9xxx.c:70:6:gt9xxx_rd_reg	24	static
+../BSP/TOUCH/gt9xxx.c:97:9:gt9xxx_init	64	static
+../BSP/TOUCH/gt9xxx.c:170:9:gt9xxx_scan	56	static
