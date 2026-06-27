@@ -64,6 +64,7 @@ thermal_web/downloads/
 tools/__pycache__/
 
 # Local assistant / workspace state
+AGENTS.md
 .claude/
 .codex_headless_ws2/
 .headless-ws/
