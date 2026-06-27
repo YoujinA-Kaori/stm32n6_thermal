@@ -152,19 +152,7 @@ int main(void)
   npu_cache_config();
   low_power_clock_config();
   /* USER CODE BEGIN 2 */
-  /*
-   * 以下 UI/触摸初始化流程暂时保留为注释。
-   * 当前主路径只运行热成像采集与显示，避免额外图形任务占用 CPU 时间。
-   * led_init();
-   * key_init();
-   * tp_dev.init();
-   * lv_init();
-   * lv_port_disp_init();
-   * lv_port_indev_init();
-   * setup_ui(&guider_ui);
-   * events_init(&guider_ui);
-   * custom_init(&guider_ui);
-   */
+
 
   /* USER CODE END 2 */
 
